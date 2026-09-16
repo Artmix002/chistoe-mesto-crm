@@ -883,7 +883,14 @@ class _DashboardState extends State<Dashboard> {
     if (!mounted) return;
     final savedTheme = prefs.getBool('dark_mode') ?? false;
     if (savedTheme != widget.darkMode) widget.onThemeChanged(savedTheme);
-    await _loadSecureTokens();
+    // При входе через общий CRM-сервер ключи интеграций остаются только на
+    // сервере. Не трогаем локальную связку ключей при каждом запуске — это
+    // исключает лишний системный запрос macOS и не выдаёт секреты сотруднику.
+    final configuredServer =
+        prefs.getString('crm_server_url') ?? AppConfig.serverUrl;
+    if (configuredServer.trim().isEmpty) {
+      await _loadSecureTokens();
+    }
     if (!mounted) return;
     currentRole = prefs.getString('crm_role') ?? 'Владелец';
     if (currentRole == 'Просмотр') currentRole = 'Только просмотр';
