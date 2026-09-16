@@ -1,0 +1,80 @@
+name: Сборка и выпуск CRM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crm-release-main
+  cancel-in-progress: false
+
+env:
+  BUILD_NAME: 1.0.${{ github.run_number }}
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: flutter build windows --release --build-name "${{ env.BUILD_NAME }}" --build-number "${{ env.BUILD_NUMBER }}"
+      - name: Упаковать Windows
+        shell: pwsh
+        run: |
+          $package = 'dist/Чистое место CRM'
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item 'build/windows/x64/runner/Release/*' $package -Recurse -Force
+          Copy-Item 'tools/windows-updater/Обновить CRM.cmd' $package -Force
+          Copy-Item 'tools/windows-updater/tools' "$package/tools" -Recurse -Force
+          Compress-Archive -Path $package -DestinationPath 'dist/CRM-windows.zip' -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CRM-windows
+          path: dist/CRM-windows.zip
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: flutter build macos --release --build-name "${{ env.BUILD_NAME }}" --build-number "${{ env.BUILD_NUMBER }}"
+      - name: Упаковать macOS
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "build/macos/Build/Products/Release/Чистое место CRM.app" dist/CRM-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CRM-macos
+          path: dist/CRM-macos.zip
+          if-no-files-found: error
+
+  publish:
+    name: Опубликовать выпуск
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: CRM ${{ env.BUILD_NAME }}
+          make_latest: true
+          generate_release_notes: true
+          files: release/*.zip
