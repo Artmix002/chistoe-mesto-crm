@@ -1,7 +1,7 @@
 /**
  * Endpoint синхронизации CRM «Чистое место».
  *
- * Разверните как Web app, задав Script properties CRM_SYNC_TOKEN и
+ * Разверните как Web app, задав Script properties CRM_OWNER_PIN и
  * CRM_SHEET_ID. Все данные CRM записываются только в отдельные листы CRM_*;
  * исходные операционные листы не перезаписываются этим скриптом.
  */

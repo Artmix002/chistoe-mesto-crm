@@ -143,7 +143,7 @@ class ChangesSyncRepository {
       throw ArgumentError.value(endpoint, 'endpoint', 'Разрешён только HTTPS');
     }
     if (token.trim().isEmpty) {
-      throw StateError('Не задан CRM_SYNC_TOKEN');
+      throw StateError('Не выполнен вход в общую CRM.');
     }
     final queued = changes.toList(growable: false);
     if (queued.length > maxChangesPerRequest) {

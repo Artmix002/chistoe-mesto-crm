@@ -641,7 +641,7 @@ class _DashboardState extends State<Dashboard> {
   Future<void> _setupSyncEndpoint() async {
     if (!canManageIntegrations || _session == null) return;
     final endpoint = TextEditingController(text: syncEndpoint);
-    // Не показываем сохранённый секрет повторно: пустое поле сохраняет его.
+    // Сессионный токен не редактируется вручную: он выдаётся после PIN-входа.
     final token = TextEditingController();
     String? validationError;
     final saved = await showDialog<bool>(
@@ -672,12 +672,9 @@ class _DashboardState extends State<Dashboard> {
                   controller: token,
                   obscureText: true,
                   decoration: InputDecoration(
-                    labelText: syncToken.isEmpty
-                        ? 'Токен синхронизации'
-                        : 'Новый токен (необязательно)',
-                    helperText: syncToken.isEmpty
-                        ? 'Введите CRM_SYNC_TOKEN'
-                        : 'Оставьте пустым, чтобы сохранить текущий токен',
+                    labelText: 'Сессия общей CRM',
+                    helperText:
+                        'Токен выдаётся автоматически после входа по PIN.',
                   ),
                 ),
                 if (validationError != null) ...[
@@ -3241,9 +3238,7 @@ $instructions
         );
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Синхронизация не настроена: задайте CRM_SYNC_ENDPOINT и CRM_SYNC_TOKEN.',
-            ),
+            content: Text('Синхронизация недоступна: войдите в общую CRM.'),
           ),
         );
       }
