@@ -32,6 +32,7 @@ class SheetsRepository {
         body: jsonEncode({
           'operation': 'readSheet',
           'sheet': sheet,
+          'sessionToken': protectedToken,
           'syncToken': protectedToken,
         }),
         cancellation: cancellation,
@@ -82,6 +83,7 @@ class SheetsRepository {
       headers: {'content-type': 'application/json; charset=utf-8'},
       body: jsonEncode({
         'operation': 'readWorkspace',
+        'sessionToken': protectedToken,
         'syncToken': protectedToken,
       }),
       cancellation: cancellation,
@@ -159,8 +161,9 @@ class ChangesSyncRepository {
       },
       body: jsonEncode({
         'schemaVersion': SheetsSchema.version,
-        // Google Apps Script web apps do not expose Authorization headers to
-        // doPost, therefore the same secret is transmitted in the HTTPS body.
+        // Сессия передаётся в HTTPS-теле: Apps Script web apps не передают
+        // заголовок Authorization в doPost.
+        'sessionToken': token,
         'syncToken': token,
         'changes': queued.map((e) => e.toJson()).toList(),
       }),

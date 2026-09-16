@@ -62,6 +62,8 @@ import 'package:crm/avito_cache.dart';
 import 'package:crm/message_queue.dart';
 import 'package:crm/oauth_pkce.dart';
 import 'package:crm/secure_store.dart';
+import 'package:crm/access_control.dart';
+import 'package:crm/auth_service.dart';
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -169,6 +171,34 @@ class _RecordingHttpClient extends http.BaseClient {
 }
 
 void main() {
+  test(
+    'master starts with a read-only shared calendar and hidden sections',
+    () {
+      final access = AccessControl(defaultPermissionsForRole('Мастер'));
+      expect(access.canView('calendar'), isTrue);
+      expect(access.canEdit('calendar'), isFalse);
+      expect(access.canView('finance'), isFalse);
+      expect(access.canView('settings'), isFalse);
+    },
+  );
+
+  test('permission levels distinguish hidden, view and edit', () {
+    const access = AccessControl({
+      'clients': 'hidden',
+      'calendar': 'view',
+      'messages': 'edit',
+    });
+    expect(access.canView('clients'), isFalse);
+    expect(access.canView('calendar'), isTrue);
+    expect(access.canEdit('calendar'), isFalse);
+    expect(access.canEdit('messages'), isTrue);
+  });
+
+  test('PIN validator accepts exactly four digits', () {
+    expect(isValidPin('1234'), isTrue);
+    expect(isValidPin('123'), isFalse);
+    expect(isValidPin('12a4'), isFalse);
+  });
   test('AiSettings defaults to GPT-5.4 and migrates the old default', () {
     expect(const AiSettings().model, 'gpt-5.4');
     expect(AiSettings.fromJson({'model': 'claude-haiku-4-5'}).model, 'gpt-5.4');
@@ -2815,6 +2845,8 @@ https://crm.example.com/sync?syncToken=query-secret''';
               onManageQuickReplies: () async {},
               onSetupSync: () async {},
               onManageUsers: () async {},
+              onMigrateConfiguration: () async {},
+              onSwitchUser: () async {},
               hasSyncCredentials: true,
               pendingChangesCount: 2,
               pendingChangesSyncing: false,

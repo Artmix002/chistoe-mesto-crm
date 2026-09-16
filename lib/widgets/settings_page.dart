@@ -28,6 +28,8 @@ class SettingsPage extends StatelessWidget {
     required this.onManageQuickReplies,
     required this.onSetupSync,
     required this.onManageUsers,
+    required this.onMigrateConfiguration,
+    required this.onSwitchUser,
     required this.hasSyncCredentials,
     required this.pendingChangesCount,
     required this.pendingChangesSyncing,
@@ -56,6 +58,8 @@ class SettingsPage extends StatelessWidget {
   final Future<void> Function() onManageQuickReplies;
   final Future<void> Function() onSetupSync;
   final Future<void> Function() onManageUsers;
+  final Future<void> Function() onMigrateConfiguration;
+  final Future<void> Function() onSwitchUser;
   final bool hasSyncCredentials;
   final int pendingChangesCount;
   final bool pendingChangesSyncing;
@@ -92,9 +96,7 @@ class SettingsPage extends StatelessWidget {
                     ),
                   )
                   .toList(),
-              onChanged: (value) {
-                if (value != null) onSelectUser(value);
-              },
+              onChanged: (_) => onSwitchUser(),
             ),
           ],
         ),
@@ -184,6 +186,12 @@ class SettingsPage extends StatelessWidget {
                 icon: Icons.manage_accounts_outlined,
                 enabled: isOwner,
                 onPressed: onManageUsers,
+              ),
+              _actionButton(
+                label: 'Перенести ключи в общий CRM-сервер',
+                icon: Icons.security_outlined,
+                enabled: canManageIntegrations,
+                onPressed: onMigrateConfiguration,
               ),
             ],
           ),

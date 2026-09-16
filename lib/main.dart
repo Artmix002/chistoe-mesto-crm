@@ -40,6 +40,8 @@ import 'widgets/calendar_components.dart';
 import 'widgets/calendar_workspace.dart';
 import 'widgets/finance_reports.dart';
 import 'oauth_pkce.dart';
+import 'access_control.dart';
+import 'auth_service.dart';
 import 'widgets/offline_status_banner.dart';
 import 'widgets/messenger_connection_card.dart';
 import 'widgets/dashboard_shell.dart';
@@ -67,6 +69,7 @@ import 'widgets/vk_inbox.dart';
 import 'widgets/messages_page.dart';
 import 'widgets/dashboard_workspace.dart';
 import 'widgets/bot_test_workspace.dart';
+import 'widgets/login_screen.dart';
 
 void main() {
   FlutterError.onError = (details) {
@@ -187,6 +190,22 @@ class _DashboardState extends State<Dashboard> {
   final SecretStore secretStore = const SecretStore();
   final RequestCancellation _lifecycleCancellation = RequestCancellation();
   late final ApiClient _apiClient;
+  CrmAuthService? _authService;
+  // Существующие локальные установки остаются доступными, пока владелец не
+  // укажет общий сервер. Как только сервер настроен, вход по PIN обязателен.
+  CrmSession? _session = CrmSession(
+    token: '',
+    user: CrmUser(
+      id: 'owner',
+      name: 'Владелец',
+      role: 'Владелец',
+      active: true,
+    ),
+    configuration: const {},
+  );
+  List<CrmUser> _serverUsers = [];
+  bool _authLoading = true;
+  String? _authError;
   String currentRole = 'Владелец';
   List<UserProfile> userProfiles = [
     UserProfile(id: 'owner', name: 'Владелец', role: 'Владелец'),
@@ -196,9 +215,11 @@ class _DashboardState extends State<Dashboard> {
     (user) => user?.id == currentUserId,
     orElse: () => null,
   );
-  bool get canManageIntegrations =>
-      RolePolicy.canManageIntegrations(currentRole);
-  bool _canEdit(String area) => RolePolicy.canEdit(currentRole, area);
+  Map<String, String> get _permissions =>
+      _session?.user.permissions ?? defaultPermissionsForRole(currentRole);
+  bool get canManageIntegrations => _canEdit('integrations');
+  bool _canView(String area) => canViewPermission(_permissions, area);
+  bool _canEdit(String area) => canEditPermission(_permissions, area);
   static const clientStatuses = [
     'Новый лид',
     'Написал',
@@ -445,26 +466,180 @@ class _DashboardState extends State<Dashboard> {
     await prefs.setString('crm_role', currentRole);
   }
 
-  Future<void> _selectUser(String id) async {
-    final profile = userProfiles.cast<UserProfile?>().firstWhere(
-      (user) => user?.id == id && user!.active,
-      orElse: () => null,
-    );
-    if (profile == null) return;
-    if (mounted) {
-      setState(() {
-        currentUserId = profile.id;
-        currentRole = profile.role;
-      });
-    } else {
-      currentUserId = profile.id;
-      currentRole = profile.role;
+  Uri? get _serverEndpoint {
+    final saved = prefs.getString('crm_server_url') ?? '';
+    return Uri.tryParse(saved.isNotEmpty ? saved : AppConfig.serverUrl);
+  }
+
+  Future<void> _initializeAuth() async {
+    final endpoint = _serverEndpoint;
+    if (endpoint == null || endpoint.scheme != 'https') {
+      if (mounted) {
+        setState(() {
+          _authLoading = false;
+          _authError = null;
+        });
+      }
+      return;
     }
-    await _saveUserProfiles();
+    _authService = CrmAuthService(endpoint: endpoint, client: _apiClient);
+    try {
+      _serverUsers = await _authService!.listUsers();
+      final storedToken = await secretStore.read('crm_session_token');
+      if (storedToken != null && storedToken.isNotEmpty) {
+        _session = await _authService!.resume(storedToken);
+        _applyServerSession(_session!);
+      }
+      if (mounted) setState(() => _authLoading = false);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _authLoading = false;
+          _authError = _safeAuthError(error);
+          _session = null;
+        });
+      }
+    }
+  }
+
+  String _safeAuthError(Object error) {
+    final message = error.toString();
+    return message.length > 180
+        ? 'Не удалось связаться с CRM-сервером.'
+        : message;
+  }
+
+  Future<void> _configureServer() async {
+    final controller = TextEditingController(
+      text: prefs.getString('crm_server_url') ?? AppConfig.serverUrl,
+    );
+    String? error;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, refresh) => AlertDialog(
+          title: const Text('Общий CRM-сервер'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Введите URL опубликованного Web app из Google Apps Script. Это публичный адрес приложения, но доступ к CRM защищён персональным PIN и сессией.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    labelText: 'HTTPS URL CRM-сервера',
+                    hintText: 'https://script.google.com/macros/s/…/exec',
+                  ),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(error!, style: const TextStyle(color: Colors.red)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final endpoint = Uri.tryParse(controller.text.trim());
+                if (endpoint == null || endpoint.scheme != 'https') {
+                  refresh(() => error = 'Укажите корректный HTTPS URL.');
+                  return;
+                }
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      await prefs.setString('crm_server_url', controller.text.trim());
+      if (!mounted) return;
+      setState(() {
+        _authLoading = true;
+        _authError = null;
+        _session = null;
+      });
+      await _initializeAuth();
+    }
+    controller.dispose();
+  }
+
+  void _applyServerSession(CrmSession session) {
+    currentUserId = session.user.id;
+    currentRole = session.user.role;
+    userProfiles = _serverUsers
+        .map(
+          (user) => UserProfile(
+            id: user.id,
+            name: user.name,
+            role: user.role,
+            active: user.active,
+            permissions: user.permissions,
+          ),
+        )
+        .toList();
+    final configuration = session.configuration;
+    final sheetUrl = configuration['sheetUrl']?.toString() ?? '';
+    if (sheetUrl.isNotEmpty) sheetController.text = sheetUrl;
+    syncEndpoint = _serverEndpoint?.toString() ?? syncEndpoint;
+    syncToken = session.token;
+  }
+
+  Future<void> _login(String userId, String pin) async {
+    final service = _authService;
+    if (service == null) return;
+    try {
+      final session = await service.login(userId: userId, pin: pin);
+      _serverUsers = await service.listUsers();
+      await secretStore.write('crm_session_token', session.token);
+      await prefs.setString('crm_current_user', session.user.id);
+      if (!mounted) return;
+      setState(() {
+        _authError = null;
+        _session = session;
+        _applyServerSession(session);
+      });
+      _audit('Вход в CRM', 'Сессия', session.user.name);
+      unawaited(_restoreCloudWorkspaceIfAvailable());
+      unawaited(_loadDeals());
+      unawaited(_loadAccounting());
+    } catch (error) {
+      if (mounted) setState(() => _authError = _safeAuthError(error));
+    }
+  }
+
+  Future<void> _switchUser() async {
+    final token = _session?.token;
+    if (token != null && _authService != null) {
+      try {
+        await _authService!.logout(token);
+      } catch (_) {
+        // Logout is best effort; local token is still removed.
+      }
+    }
+    await secretStore.delete('crm_session_token');
+    if (!mounted) return;
+    setState(() {
+      _session = null;
+      _authError = null;
+    });
+    if (_authService == null) await _configureServer();
   }
 
   Future<void> _setupSyncEndpoint() async {
-    if (!canManageIntegrations) return;
+    if (!canManageIntegrations || _session == null) return;
     final endpoint = TextEditingController(text: syncEndpoint);
     // Не показываем сохранённый секрет повторно: пустое поле сохраняет его.
     final token = TextEditingController();
@@ -523,18 +698,9 @@ class _DashboardState extends State<Dashboard> {
             ElevatedButton(
               onPressed: () {
                 final uri = Uri.tryParse(endpoint.text.trim());
-                final effectiveToken = token.text.trim().isEmpty
-                    ? syncToken
-                    : token.text.trim();
                 if (uri == null || uri.scheme != 'https') {
                   refresh(
                     () => validationError = 'Укажите корректный HTTPS URL',
-                  );
-                  return;
-                }
-                if (effectiveToken.isEmpty) {
-                  refresh(
-                    () => validationError = 'Введите токен синхронизации',
                   );
                   return;
                 }
@@ -548,11 +714,6 @@ class _DashboardState extends State<Dashboard> {
     );
     if (saved == true) {
       final endpointValue = endpoint.text.trim();
-      final tokenValue = token.text.trim();
-      await secretStore.write('sync_endpoint', endpointValue);
-      if (tokenValue.isNotEmpty) {
-        await secretStore.write('sync_token', tokenValue);
-      }
       if (!mounted) {
         endpoint.dispose();
         token.dispose();
@@ -560,18 +721,94 @@ class _DashboardState extends State<Dashboard> {
       }
       setState(() {
         syncEndpoint = endpointValue;
-        if (tokenValue.isNotEmpty) syncToken = tokenValue;
         pendingChangesSyncError = null;
       });
-      _audit(
-        'Изменена конфигурация',
-        'Интеграция',
-        'Защищённая синхронизация: ${Uri.tryParse(endpointValue)?.host ?? 'HTTPS endpoint'}',
-      );
+      await prefs.setString('crm_server_url', endpointValue);
+      await _migrateLocalConfiguration(clearLocalSecrets: false);
       unawaited(_syncPendingChanges(silent: true));
     }
     endpoint.dispose();
     token.dispose();
+  }
+
+  Future<void> _migrateLocalConfiguration({
+    required bool clearLocalSecrets,
+  }) async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return;
+    final configuration = <String, dynamic>{
+      'sheetUrl': sheetController.text.trim(),
+      'syncToken': syncToken,
+      'calendarAccessToken': calendarAccessToken ?? '',
+      'calendarRefreshToken': calendarRefreshToken ?? '',
+      'calendarClientSecret': calendarClientSecret,
+      'calendarId': calendarId,
+      'calendarName': calendarName,
+      'aiApiKey': aiApiKey,
+      'aiSettings': aiSettings.toJson(),
+      'messengerTokens': messengerSecrets,
+      'messengers': messengerConnected,
+      'avitoAccounts': avitoAccounts,
+    };
+    try {
+      final response = await service.migrateConfiguration(
+        session.token,
+        configuration,
+      );
+      final serverConfig = response['configuration'] is Map
+          ? Map<String, dynamic>.from(response['configuration'])
+          : const <String, dynamic>{};
+      if (serverConfig['sheetUrl']?.toString().isNotEmpty == true) {
+        sheetController.text = serverConfig['sheetUrl'].toString();
+      }
+      if (clearLocalSecrets) await _clearLocalIntegrationSecrets();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              clearLocalSecrets
+                  ? 'Ключи перенесены в общий CRM-сервер и удалены с этого компьютера.'
+                  : 'Общая конфигурация CRM сохранена на сервере.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_safeAuthError(error))));
+      }
+    }
+  }
+
+  Future<void> _clearLocalIntegrationSecrets() async {
+    for (final key in [
+      'sync_token',
+      'calendar_access_token',
+      'calendar_refresh_token',
+      'calendar_client_secret',
+      'ai_api_key',
+      'avito_accounts',
+      'messenger_telegram_token',
+      'messenger_vk_token',
+      'messenger_instagram_token',
+    ]) {
+      await secretStore.delete(key);
+    }
+    messengerSecrets.clear();
+    aiApiKey = '';
+    calendarAccessToken = null;
+    calendarRefreshToken = null;
+    calendarClientSecret = '';
+    avitoAccounts = avitoAccounts.map((account) {
+      final copy = Map<String, dynamic>.from(account);
+      copy.remove('clientSecret');
+      return copy;
+    }).toList();
+    await prefs.remove('avito_client_secret');
+    await prefs.setBool('crm_server_managed_secrets', true);
   }
 
   final pages = crmPages;
@@ -696,6 +933,12 @@ class _DashboardState extends State<Dashboard> {
         );
     currentUserId = activeUser.id;
     currentRole = activeUser.role;
+    await _initializeAuth();
+    if (!mounted) return;
+    if (_session == null && _authService != null) {
+      preferencesLoaded = true;
+      return;
+    }
     try {
       final queued = prefs.getString('pending_messages');
       if (queued != null) {
@@ -2168,6 +2411,9 @@ $instructions
 
   Future<void> _loadSecureTokens() async {
     try {
+      // После миграции общая CRM получает только сессионный токен. Ключи
+      // интеграций не считываются и не возвращаются на компьютеры сотрудников.
+      if (prefs.getBool('crm_server_managed_secrets') == true) return;
       final secureAccess = await secretStore.read('calendar_access_token');
       final secureRefresh = await secretStore.read('calendar_refresh_token');
       final secureCalendarClientSecret = await secretStore.read(
@@ -3765,26 +4011,71 @@ $instructions
   }
 
   @override
-  Widget build(BuildContext context) => DashboardShell(
-    darkMode: widget.darkMode,
-    sidebar: _sidebar(),
-    title: pages[selected].title,
-    now: now,
-    hasUnreadNotifications: notifications.any((item) => !item.read),
-    onOpenNotifications: _showNotificationCenter,
-    onThemeChanged: (next) {
-      widget.onThemeChanged(next);
-      unawaited(
-        SharedPreferences.getInstance().then(
-          (prefs) => prefs.setBool('dark_mode', next),
-        ),
+  Widget build(BuildContext context) {
+    if (_session == null) {
+      return LoginScreen(
+        users: _serverUsers,
+        loading: _authLoading,
+        error: _authError,
+        initialUserId: prefs.getString('crm_current_user'),
+        onLogin: _login,
+        onRetry: () {
+          setState(() {
+            _authLoading = true;
+            _authError = null;
+          });
+          unawaited(_initializeAuth());
+        },
+        onConfigureServer: () => unawaited(_configureServer()),
       );
-    },
-    body: _pageBody(),
-  );
+    }
+    final allowed = _firstVisiblePage();
+    if (!_canView(_pagePermissionArea(selected))) selected = allowed;
+    return DashboardShell(
+      darkMode: widget.darkMode,
+      sidebar: _sidebar(),
+      title: pages[selected].title,
+      now: now,
+      hasUnreadNotifications: notifications.any((item) => !item.read),
+      onOpenNotifications: _showNotificationCenter,
+      onThemeChanged: (next) {
+        widget.onThemeChanged(next);
+        unawaited(
+          SharedPreferences.getInstance().then(
+            (prefs) => prefs.setBool('dark_mode', next),
+          ),
+        );
+      },
+      body: _pageBody(),
+    );
+  }
+
+  int _firstVisiblePage() {
+    for (var index = 0; index < pages.length; index++) {
+      if (_canView(_pagePermissionArea(index))) return index;
+    }
+    return 0;
+  }
+
+  String _pagePermissionArea(int index) => switch (index) {
+    0 => 'dashboard',
+    1 => 'clients',
+    2 => 'deals',
+    3 => 'calendar',
+    4 => 'finance',
+    5 => 'stock',
+    6 => 'settings',
+    7 => 'messages',
+    8 => 'bot',
+    _ => 'dashboard',
+  };
 
   Widget _sidebar() => CrmSidebar(
     selected: selected,
+    canView: (index) => _canView(_pagePermissionArea(index)),
+    userName: currentUser?.name ?? _session?.user.name ?? 'Профиль',
+    userRole: currentRole,
+    onSwitchUser: () => unawaited(_switchUser()),
     onSelect: (index) {
       setState(() => selected = index);
       if (index == 4) _loadAccounting();
@@ -9342,80 +9633,10 @@ $instructions
     onConfigure: () => _setupMessenger(key),
   );
 
-  Future<UserProfile?> _createUserProfile() async {
-    final name = TextEditingController();
-    var role = 'Мастер';
-    final profile = await showDialog<UserProfile>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, refresh) => AlertDialog(
-          title: const Text('Новый профиль'),
-          content: SizedBox(
-            width: 380,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: name,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Имя сотрудника',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: role,
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'Администратор',
-                      child: Text('Администратор'),
-                    ),
-                    DropdownMenuItem(value: 'Мастер', child: Text('Мастер')),
-                    DropdownMenuItem(
-                      value: 'Бухгалтер',
-                      child: Text('Бухгалтер'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'Только просмотр',
-                      child: Text('Только просмотр'),
-                    ),
-                  ],
-                  onChanged: (value) => refresh(() => role = value ?? role),
-                  decoration: const InputDecoration(labelText: 'Роль'),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Отмена'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final value = name.text.trim();
-                if (value.isEmpty) return;
-                Navigator.pop(
-                  dialogContext,
-                  UserProfile(
-                    id: 'user-${DateTime.now().microsecondsSinceEpoch}',
-                    name: value,
-                    role: role,
-                  ),
-                );
-              },
-              child: const Text('Добавить'),
-            ),
-          ],
-        ),
-      ),
-    );
-    name.dispose();
-    return profile;
-  }
-
   Future<void> _manageUserProfiles() async {
-    if (currentRole != 'Владелец') return;
+    if (currentRole != 'Владелец' || _session == null || _authService == null) {
+      return;
+    }
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -9432,7 +9653,9 @@ $instructions
                 final onlyOwner =
                     profile.role == 'Владелец' &&
                     userProfiles
-                            .where((item) => item.role == 'Владелец')
+                            .where(
+                              (item) => item.role == 'Владелец' && item.active,
+                            )
                             .length ==
                         1;
                 final canDelete = !onlyOwner && profile.id != currentUserId;
@@ -9445,19 +9668,49 @@ $instructions
                     ),
                   ),
                   title: Text(profile.name),
-                  subtitle: Text(profile.role),
+                  subtitle: Text(
+                    '${profile.role} · ${profile.active ? 'активен' : 'отключён'}',
+                  ),
+                  onTap: () async {
+                    final updated = await _editServerUser(profile);
+                    if (updated != null) refresh(() {});
+                  },
                   trailing: IconButton(
                     tooltip: canDelete
-                        ? 'Удалить профиль'
-                        : 'Нельзя удалить активного или единственного владельца',
+                        ? 'Отключить пользователя'
+                        : 'Нельзя отключить текущего или единственного владельца',
                     onPressed: canDelete
                         ? () async {
-                            userProfiles.removeAt(index);
-                            await _saveUserProfiles();
-                            refresh(() {});
+                            try {
+                              final users = await _authService!.deactivateUser(
+                                _session!.token,
+                                profile.id,
+                              );
+                              _serverUsers = users;
+                              userProfiles = users
+                                  .map(
+                                    (user) => UserProfile(
+                                      id: user.id,
+                                      name: user.name,
+                                      role: user.role,
+                                      active: user.active,
+                                      permissions: user.permissions,
+                                    ),
+                                  )
+                                  .toList();
+                              refresh(() {});
+                            } catch (error) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(_safeAuthError(error)),
+                                  ),
+                                );
+                              }
+                            }
                           }
                         : null,
-                    icon: const Icon(Icons.delete_outline),
+                    icon: const Icon(Icons.person_off_outlined),
                   ),
                 );
               },
@@ -9466,10 +9719,8 @@ $instructions
           actions: [
             TextButton.icon(
               onPressed: () async {
-                final profile = await _createUserProfile();
+                final profile = await _editServerUser(null);
                 if (profile == null) return;
-                userProfiles.add(profile);
-                await _saveUserProfiles();
                 refresh(() {});
               },
               icon: const Icon(Icons.person_add_outlined),
@@ -9485,10 +9736,184 @@ $instructions
     );
   }
 
+  Future<CrmUser?> _editServerUser(UserProfile? existing) async {
+    final name = TextEditingController(text: existing?.name ?? '');
+    final pin = TextEditingController();
+    var role = existing?.role ?? 'Мастер';
+    var active = existing?.active ?? true;
+    final permissions = Map<String, String>.from(
+      existing?.permissions ?? defaultPermissionsForRole(role),
+    );
+    CrmUser? result;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, refresh) => AlertDialog(
+          title: Text(
+            existing == null ? 'Новый пользователь' : 'Права пользователя',
+          ),
+          content: SizedBox(
+            width: 600,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(
+                      labelText: 'Имя сотрудника',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: pin,
+                    keyboardType: TextInputType.number,
+                    obscureText: true,
+                    maxLength: 4,
+                    decoration: InputDecoration(
+                      labelText: existing == null
+                          ? 'PIN из 4 цифр'
+                          : 'Новый PIN (оставьте пустым, чтобы не менять)',
+                      counterText: '',
+                    ),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: role,
+                    decoration: const InputDecoration(labelText: 'Роль'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'Владелец',
+                        child: Text('Владелец'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Администратор',
+                        child: Text('Администратор'),
+                      ),
+                      DropdownMenuItem(value: 'Мастер', child: Text('Мастер')),
+                      DropdownMenuItem(
+                        value: 'Бухгалтер',
+                        child: Text('Бухгалтер'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Сотрудник',
+                        child: Text('Сотрудник'),
+                      ),
+                    ],
+                    onChanged: (value) => refresh(() {
+                      role = value ?? role;
+                      if (existing == null) {
+                        permissions
+                          ..clear()
+                          ..addAll(defaultPermissionsForRole(role));
+                      }
+                    }),
+                  ),
+                  SwitchListTile(
+                    value: active,
+                    onChanged: (value) => refresh(() => active = value),
+                    title: const Text('Активный пользователь'),
+                  ),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Индивидуальные права'),
+                  ),
+                  const SizedBox(height: 6),
+                  ...crmPermissionAreas.map(
+                    (area) => DropdownButtonFormField<String>(
+                      initialValue: permissions[area] ?? 'hidden',
+                      decoration: InputDecoration(
+                        labelText: crmPermissionLabels[area],
+                      ),
+                      items: PermissionLevel.values
+                          .map(
+                            (level) => DropdownMenuItem(
+                              value: level.value,
+                              child: Text(level.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: role == 'Владелец'
+                          ? null
+                          : (value) => refresh(
+                              () => permissions[area] = value ?? 'hidden',
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved == true && _session != null && _authService != null) {
+      final value = name.text.trim();
+      if (value.isEmpty || (existing == null && !isValidPin(pin.text))) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Укажите имя и PIN из 4 цифр.')),
+          );
+        }
+      } else {
+        try {
+          final candidate = CrmUser(
+            id: existing?.id ?? '',
+            name: value,
+            role: role,
+            active: active,
+            permissions: role == 'Владелец'
+                ? defaultPermissionsForRole(role)
+                : permissions,
+          );
+          final users = await _authService!.saveUser(
+            _session!.token,
+            candidate,
+            pin: pin.text.trim().isEmpty ? null : pin.text.trim(),
+          );
+          _serverUsers = users;
+          userProfiles = users
+              .map(
+                (user) => UserProfile(
+                  id: user.id,
+                  name: user.name,
+                  role: user.role,
+                  active: user.active,
+                  permissions: user.permissions,
+                ),
+              )
+              .toList();
+          result = users.cast<CrmUser?>().firstWhere(
+            (user) => user?.name == value,
+            orElse: () => null,
+          );
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(_safeAuthError(error))));
+          }
+        }
+      }
+    }
+    name.dispose();
+    pin.dispose();
+    return result;
+  }
+
   Widget _settings() => SettingsPage(
     currentUserId: currentUserId,
     userProfiles: userProfiles,
-    onSelectUser: (id) => unawaited(_selectUser(id)),
+    onSelectUser: (_) => unawaited(_switchUser()),
     sheetController: sheetController,
     canManageIntegrations: canManageIntegrations,
     canBackup: _canEdit('admin'),
@@ -9508,6 +9933,32 @@ $instructions
     onSetupAi: _setupAi,
     aiConfigured: aiSettings.enabled && aiApiKey.isNotEmpty,
     onManageUsers: _manageUserProfiles,
+    onMigrateConfiguration: () async {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Перенести ключи в общий CRM-сервер?'),
+          content: const Text(
+            'Ключи таблиц, календаря, мессенджеров, Avito и AI будут сохранены в Script Properties и удалены с этого компьютера после подтверждённого переноса. Сотрудники их не увидят.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Перенести'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        await _migrateLocalConfiguration(clearLocalSecrets: true);
+        await prefs.setBool('crm_server_managed_secrets', true);
+      }
+    },
+    onSwitchUser: _switchUser,
     hasSyncCredentials: syncEndpoint.isNotEmpty && syncToken.isNotEmpty,
     pendingChangesCount: localChangeQueue.items.length,
     pendingChangesSyncing: pendingChangesSyncing,

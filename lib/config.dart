@@ -1,4 +1,7 @@
 class AppConfig {
+  /// Публичный URL общего Apps Script CRM. Его можно передавать в выпуск через
+  /// --dart-define=CRM_SERVER_URL=..., он не даёт доступ к данным без сессии.
+  static const serverUrl = String.fromEnvironment('CRM_SERVER_URL');
   static const sheetId = String.fromEnvironment(
     'CRM_SHEET_ID',
     defaultValue: '',
@@ -13,6 +16,9 @@ class AppConfig {
 
   /// HTTPS endpoint вашего backend, принимающий локальные изменения CRM.
   static const syncEndpoint = String.fromEnvironment('CRM_SYNC_ENDPOINT');
+
+  static Uri? get serverEndpoint =>
+      Uri.tryParse(serverUrl.isNotEmpty ? serverUrl : syncEndpoint);
 }
 
 bool isGoogleClientIdValid(String value) => RegExp(

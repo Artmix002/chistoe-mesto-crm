@@ -26,7 +26,7 @@ jobs:
         with:
           channel: stable
       - run: flutter pub get
-      - run: flutter build windows --release --build-name "${{ env.BUILD_NAME }}" --build-number "${{ env.BUILD_NUMBER }}"
+      - run: flutter build windows --release --build-name "${{ env.BUILD_NAME }}" --build-number "${{ env.BUILD_NUMBER }}" --dart-define=CRM_SERVER_URL="${{ secrets.CRM_SERVER_URL }}"
       - name: Упаковать Windows
         shell: pwsh
         run: |
@@ -51,7 +51,7 @@ jobs:
         with:
           channel: stable
       - run: flutter pub get
-      - run: flutter build macos --release --build-name "${{ env.BUILD_NAME }}" --build-number "${{ env.BUILD_NUMBER }}"
+      - run: flutter build macos --release --build-name "${{ env.BUILD_NAME }}" --build-number "${{ env.BUILD_NUMBER }}" --dart-define=CRM_SERVER_URL="${{ secrets.CRM_SERVER_URL }}"
       - name: Упаковать macOS
         run: |
           mkdir -p dist

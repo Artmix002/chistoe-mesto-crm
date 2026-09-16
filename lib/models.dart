@@ -230,18 +230,21 @@ class UserProfile {
     required this.name,
     required this.role,
     this.active = true,
-  });
+    Map<String, String>? permissions,
+  }) : permissions = Map<String, String>.from(permissions ?? const {});
 
   final String id;
   String name;
   String role;
   bool active;
+  Map<String, String> permissions;
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     'role': role,
     'active': active,
+    'permissions': permissions,
   };
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
@@ -249,6 +252,11 @@ class UserProfile {
     name: '${json['name'] ?? ''}',
     role: '${json['role'] ?? 'Только просмотр'}',
     active: json['active'] != false,
+    permissions: json['permissions'] is Map
+        ? (json['permissions'] as Map).map(
+            (key, value) => MapEntry(key.toString(), value.toString()),
+          )
+        : null,
   );
 }
 

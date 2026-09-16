@@ -1,4 +1,6 @@
-/// Centralized authorization policy for the local CRM profile.
+import 'access_control.dart';
+
+/// Совместимость для старого локального профиля до его миграции на сервер.
 class RolePolicy {
   static bool canManageIntegrations(String role) =>
       role == 'Владелец' || role == 'Администратор';
@@ -14,3 +16,9 @@ class RolePolicy {
     return false;
   }
 }
+
+bool canViewPermission(Map<String, String> permissions, String area) =>
+    AccessControl(permissions).canView(area);
+
+bool canEditPermission(Map<String, String> permissions, String area) =>
+    AccessControl(permissions).canEdit(area);

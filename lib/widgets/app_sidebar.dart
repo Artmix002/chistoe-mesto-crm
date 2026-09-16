@@ -3,10 +3,22 @@ import 'package:flutter/material.dart';
 import '../navigation.dart';
 
 class CrmSidebar extends StatelessWidget {
-  const CrmSidebar({super.key, required this.selected, required this.onSelect});
+  const CrmSidebar({
+    super.key,
+    required this.selected,
+    required this.onSelect,
+    this.canView,
+    this.userName = 'Профиль',
+    this.userRole = 'Настройте аккаунт',
+    this.onSwitchUser,
+  });
 
   final int selected;
   final ValueChanged<int> onSelect;
+  final bool Function(int index)? canView;
+  final String userName;
+  final String userRole;
+  final VoidCallback? onSwitchUser;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -70,60 +82,69 @@ class CrmSidebar extends StatelessWidget {
         Expanded(
           child: ListView(
             padding: EdgeInsets.zero,
-            children: List.generate(
-              crmPages.length,
-              (index) => _NavigationItem(
-                title: crmPages[index].title,
-                icon: crmPageIcons[index],
-                active: index == selected,
-                onTap: () => onSelect(index),
-              ),
-            ),
+            children: List.generate(crmPages.length, (index) => index)
+                .where((index) => canView?.call(index) ?? true)
+                .map(
+                  (index) => _NavigationItem(
+                    title: crmPages[index].title,
+                    icon: crmPageIcons[index],
+                    active: index == selected,
+                    onTap: () => onSelect(index),
+                  ),
+                )
+                .toList(),
           ),
         ),
         const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF23262C),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 17,
-                backgroundColor: Color(0xFFF28C28),
-                child: Text(
-                  'А',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+        InkWell(
+          onTap: onSwitchUser,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF23262C),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 17,
+                  backgroundColor: Color(0xFFF28C28),
+                  child: Text(
+                    'А',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-              ),
-              SizedBox(width: 10),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Профиль',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        userName,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Настройте аккаунт',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11, color: Color(0xFF8D929B)),
-                    ),
-                  ],
+                      Text(
+                        userRole,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF8D929B),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
