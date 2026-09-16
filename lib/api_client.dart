@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -181,54 +180,18 @@ class ApiClient {
           .send(request)
           .then(http.Response.fromStream)
           .timeout(timeout);
-      // Apps Script responds to POST with a 302 to a one-time content URL.
-      // dart:io follows a 302 as GET, which results in the Google 405 page.
-      // Re-send the original request body once to that URL instead.
-      if (response.statusCode == HttpStatus.found &&
-          method == 'POST' &&
-          response.headers['location'] != null) {
-        final redirect = uri.resolve(response.headers['location']!);
-        return await _sendPostRedirect(
-          redirect,
-          headers: headers,
-          body: body,
-          cancellation: cancellation,
-        );
+      // Apps Script returns POST results through a signed content URL (302).
+      // It is safe to read this server-issued URL with GET; this retrieves the
+      // completed JSON response rather than repeating the CRM operation.
+      if (response.statusCode == 302 && method == 'POST') {
+        final location = response.headers['location'];
+        if (location != null && location.isNotEmpty) {
+          return await client
+              .get(uri.resolve(location), headers: headers)
+              .timeout(timeout);
+        }
       }
       return response;
-    } finally {
-      client.close();
-    }
-  }
-
-  Future<http.Response> _sendPostRedirect(
-    Uri uri, {
-    Map<String, String>? headers,
-    Object? body,
-    RequestCancellation? cancellation,
-  }) async {
-    _throwIfCancelled(cancellation);
-    final request = http.AbortableRequest(
-      'POST',
-      uri,
-      abortTrigger: cancellation?.whenCancelled,
-    )..followRedirects = false;
-    if (headers != null) request.headers.addAll(headers);
-    if (body is String) {
-      request.body = body;
-    } else if (body is List<int>) {
-      request.bodyBytes = body;
-    } else if (body is Map<String, String>) {
-      request.bodyFields = body;
-    } else if (body != null) {
-      throw ArgumentError.value(body, 'body', 'Неподдерживаемое тело запроса');
-    }
-    final client = clientFactory?.call() ?? http.Client();
-    try {
-      return await client
-          .send(request)
-          .then(http.Response.fromStream)
-          .timeout(timeout);
     } finally {
       client.close();
     }
