@@ -17,6 +17,9 @@ class DashboardShell extends StatelessWidget {
     required this.hasUnreadNotifications,
     required this.onOpenNotifications,
     required this.onThemeChanged,
+    this.selectedPage = 0,
+    this.mobileDestinations = const [],
+    this.onPageSelected,
     required this.body,
   });
 
@@ -27,6 +30,9 @@ class DashboardShell extends StatelessWidget {
   final bool hasUnreadNotifications;
   final VoidCallback onOpenNotifications;
   final ValueChanged<bool> onThemeChanged;
+  final int selectedPage;
+  final List<DashboardMobileDestination> mobileDestinations;
+  final ValueChanged<int>? onPageSelected;
   final Widget body;
 
   @override
@@ -38,6 +44,15 @@ class DashboardShell extends StatelessWidget {
             ? const Color(0xFF101216)
             : const Color(0xFFF5F6F8),
         drawer: compact ? Drawer(child: sidebar) : null,
+        bottomNavigationBar:
+            compact && mobileDestinations.length >= 2 && onPageSelected != null
+            ? _MobileNavigationBar(
+                darkMode: darkMode,
+                selectedPage: selectedPage,
+                destinations: mobileDestinations,
+                onPageSelected: onPageSelected!,
+              )
+            : null,
         body: Row(
           children: [
             if (!compact) sidebar,
@@ -72,6 +87,72 @@ class DashboardShell extends StatelessWidget {
       );
     },
   );
+}
+
+class DashboardMobileDestination {
+  const DashboardMobileDestination({
+    required this.pageIndex,
+    required this.label,
+    required this.icon,
+  });
+
+  final int pageIndex;
+  final String label;
+  final IconData icon;
+}
+
+class _MobileNavigationBar extends StatelessWidget {
+  const _MobileNavigationBar({
+    required this.darkMode,
+    required this.selectedPage,
+    required this.destinations,
+    required this.onPageSelected,
+  });
+
+  final bool darkMode;
+  final int selectedPage;
+  final List<DashboardMobileDestination> destinations;
+  final ValueChanged<int> onPageSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedIndex = destinations.indexWhere(
+      (destination) => destination.pageIndex == selectedPage,
+    );
+    return SafeArea(
+      top: false,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: darkMode ? const Color(0xFF1A1D23) : Colors.white,
+          border: Border(
+            top: BorderSide(
+              color: darkMode
+                  ? const Color(0xFF30343B)
+                  : const Color(0xFFE7E9ED),
+            ),
+          ),
+        ),
+        child: NavigationBar(
+          height: 68,
+          backgroundColor: Colors.transparent,
+          indicatorColor: const Color(0x33F28C28),
+          selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          onDestinationSelected: (index) =>
+              onPageSelected(destinations[index].pageIndex),
+          destinations: destinations
+              .map(
+                (destination) => NavigationDestination(
+                  icon: Icon(destination.icon),
+                  selectedIcon: Icon(destination.icon),
+                  label: destination.label,
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
 }
 
 class _Header extends StatelessWidget {
