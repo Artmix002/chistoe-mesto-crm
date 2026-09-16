@@ -440,6 +440,11 @@ class _DashboardState extends State<Dashboard> {
   bool wrapDealText = true;
   DateTime? fromDate, toDate;
   static const sheetId = AppConfig.sheetId;
+  bool get _hasProtectedSheetAccess {
+    final endpoint = Uri.tryParse(syncEndpoint);
+    return endpoint?.scheme == 'https' && syncToken.trim().isNotEmpty;
+  }
+
   String get currentSheetId {
     final m = RegExp(
       r'/spreadsheets/d/([a-zA-Z0-9_-]+)',
@@ -11353,7 +11358,7 @@ $instructions
     final cancellation = _beginSheetsRequest();
     if (mounted) setState(() => loading = true);
     try {
-      if (currentSheetId.isEmpty) {
+      if (currentSheetId.isEmpty && !_hasProtectedSheetAccess) {
         throw Exception('Не задан ID Google Sheets');
       }
       final rowsFromSheet = await _sheets.readSheet(
@@ -11391,7 +11396,7 @@ $instructions
           _rebuildDealRows();
         }
       } catch (_) {}
-      sheetError = currentSheetId.isEmpty
+      sheetError = currentSheetId.isEmpty && !_hasProtectedSheetAccess
           ? 'Укажите ID или ссылку Google Sheets в настройках.'
           : syncedDealRows.isEmpty
           ? 'Не удалось загрузить сделки из Google Sheets.'
@@ -12567,7 +12572,7 @@ $instructions
       });
     }
     try {
-      if (currentSheetId.isEmpty) {
+      if (currentSheetId.isEmpty && !_hasProtectedSheetAccess) {
         throw Exception('Не задан ID Google Sheets');
       }
       accountingRows = await _sheets.readSheet(
@@ -12616,7 +12621,7 @@ $instructions
           accountingPage = 0;
         }
       } catch (_) {}
-      sheetError = currentSheetId.isEmpty
+      sheetError = currentSheetId.isEmpty && !_hasProtectedSheetAccess
           ? 'Укажите ID или ссылку Google Sheets в настройках.'
           : accountingRows.isEmpty
           ? 'Не удалось загрузить таблицу. Проверьте доступ по ссылке.'
