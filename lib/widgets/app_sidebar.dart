@@ -11,6 +11,7 @@ class CrmSidebar extends StatelessWidget {
     this.userName = 'Профиль',
     this.userRole = 'Настройте аккаунт',
     this.onSwitchUser,
+    this.onLogout,
   });
 
   final int selected;
@@ -19,6 +20,7 @@ class CrmSidebar extends StatelessWidget {
   final String userName;
   final String userRole;
   final VoidCallback? onSwitchUser;
+  final VoidCallback? onLogout;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -143,6 +145,13 @@ class CrmSidebar extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (onLogout != null)
+                  IconButton(
+                    tooltip: 'Выйти из аккаунта',
+                    onPressed: onLogout,
+                    icon: const Icon(Icons.logout_outlined),
+                    color: const Color(0xFFB9BDC5),
+                  ),
               ],
             ),
           ),

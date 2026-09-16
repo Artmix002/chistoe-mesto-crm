@@ -638,6 +638,33 @@ class _DashboardState extends State<Dashboard> {
     if (_authService == null) await _configureServer();
   }
 
+  Future<void> _confirmLogout() async {
+    final name =
+        _session?.user.name ?? currentUser?.name ?? 'текущего пользователя';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Выйти из аккаунта?'),
+        content: Text(
+          'Сессия пользователя «$name» будет завершена на этом компьютере. '
+          'Для следующего входа потребуется личный PIN.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.logout_outlined),
+            label: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _switchUser();
+  }
+
   Future<void> _setupSyncEndpoint() async {
     if (!canManageIntegrations || _session == null) return;
     final endpoint = TextEditingController(text: syncEndpoint);
@@ -4078,6 +4105,7 @@ $instructions
     userName: currentUser?.name ?? _session?.user.name ?? 'Профиль',
     userRole: currentRole,
     onSwitchUser: () => unawaited(_switchUser()),
+    onLogout: () => unawaited(_confirmLogout()),
     onSelect: (index) {
       setState(() => selected = index);
       if (index == 4) _loadAccounting();
@@ -9961,6 +9989,7 @@ $instructions
       }
     },
     onSwitchUser: _switchUser,
+    onLogout: _confirmLogout,
     hasSyncCredentials: syncEndpoint.isNotEmpty && syncToken.isNotEmpty,
     pendingChangesCount: localChangeQueue.items.length,
     pendingChangesSyncing: pendingChangesSyncing,

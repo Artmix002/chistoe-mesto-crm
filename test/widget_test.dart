@@ -2652,6 +2652,23 @@ https://crm.example.com/sync?syncToken=query-secret''';
     semantics.dispose();
   });
 
+  testWidgets('sidebar exposes a dedicated logout action', (tester) async {
+    var loggedOut = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CrmSidebar(
+            selected: 1,
+            onSelect: (_) {},
+            onLogout: () => loggedOut = true,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('Выйти из аккаунта'));
+    expect(loggedOut, isTrue);
+  });
+
   testWidgets('dashboard shell opens navigation drawer on a compact window', (
     tester,
   ) async {
@@ -2847,6 +2864,7 @@ https://crm.example.com/sync?syncToken=query-secret''';
               onManageUsers: () async {},
               onMigrateConfiguration: () async {},
               onSwitchUser: () async {},
+              onLogout: () async {},
               hasSyncCredentials: true,
               pendingChangesCount: 2,
               pendingChangesSyncing: false,

@@ -30,6 +30,7 @@ class SettingsPage extends StatelessWidget {
     required this.onManageUsers,
     required this.onMigrateConfiguration,
     required this.onSwitchUser,
+    required this.onLogout,
     required this.hasSyncCredentials,
     required this.pendingChangesCount,
     required this.pendingChangesSyncing,
@@ -60,6 +61,7 @@ class SettingsPage extends StatelessWidget {
   final Future<void> Function() onManageUsers;
   final Future<void> Function() onMigrateConfiguration;
   final Future<void> Function() onSwitchUser;
+  final Future<void> Function() onLogout;
   final bool hasSyncCredentials;
   final int pendingChangesCount;
   final bool pendingChangesSyncing;
@@ -97,6 +99,12 @@ class SettingsPage extends StatelessWidget {
                   )
                   .toList(),
               onChanged: (_) => onSwitchUser(),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Выйти из аккаунта',
+              onPressed: () => unawaited(onLogout()),
+              icon: const Icon(Icons.logout_outlined),
             ),
           ],
         ),
