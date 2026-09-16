@@ -29,6 +29,7 @@ class SettingsPage extends StatelessWidget {
     required this.onSetupSync,
     required this.onManageUsers,
     required this.onMigrateConfiguration,
+    required this.onFullSync,
     required this.onSwitchUser,
     required this.onLogout,
     required this.hasSyncCredentials,
@@ -60,6 +61,7 @@ class SettingsPage extends StatelessWidget {
   final Future<void> Function() onSetupSync;
   final Future<void> Function() onManageUsers;
   final Future<void> Function() onMigrateConfiguration;
+  final Future<void> Function() onFullSync;
   final Future<void> Function() onSwitchUser;
   final Future<void> Function() onLogout;
   final bool hasSyncCredentials;
@@ -200,6 +202,12 @@ class SettingsPage extends StatelessWidget {
                 icon: Icons.security_outlined,
                 enabled: canManageIntegrations,
                 onPressed: onMigrateConfiguration,
+              ),
+              _actionButton(
+                label: 'Выгрузить все данные CRM',
+                icon: Icons.cloud_upload_outlined,
+                enabled: isOwner && hasSyncCredentials,
+                onPressed: onFullSync,
               ),
             ],
           ),

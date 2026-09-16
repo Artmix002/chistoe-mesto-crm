@@ -1572,6 +1572,32 @@ void main() {
   });
 
   test(
+    'shared message payload includes team state but no integration secrets',
+    () {
+      final payload = buildSyncPayload(
+        'Сообщения',
+        clients: const [],
+        stockItems: const [],
+        stockMovements: const [],
+        manualDeals: const [],
+        businessTransactions: const [],
+        closedPeriods: const [],
+        quickReplyTemplates: const ['Здравствуйте'],
+        messageAssignees: const {'VK:42': 'Артем'},
+        messageTags: const {
+          'VK:42': ['важно'],
+        },
+        pendingMessages: const [
+          {'id': 'message-1', 'channel': 'vk', 'text': 'Перезвоните'},
+        ],
+      );
+      expect(payload['scope'], 'messages');
+      expect(payload['quickReplyTemplates'], ['Здравствуйте']);
+      expect(jsonEncode(payload), isNot(contains('access_token')));
+    },
+  );
+
+  test(
     'workspace sync scopes preserve service, dashboard and appointment data',
     () {
       final catalog = ServiceCatalogItem(
@@ -2863,6 +2889,7 @@ https://crm.example.com/sync?syncToken=query-secret''';
               onSetupSync: () async {},
               onManageUsers: () async {},
               onMigrateConfiguration: () async {},
+              onFullSync: () async {},
               onSwitchUser: () async {},
               onLogout: () async {},
               hasSyncCredentials: true,

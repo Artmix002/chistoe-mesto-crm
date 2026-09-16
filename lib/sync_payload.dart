@@ -18,6 +18,12 @@ Map<String, dynamic> buildSyncPayload(
   String knowledgeBase = '',
   Iterable<Map<String, dynamic>> knowledgeVersions = const [],
   Iterable<Map<String, dynamic>> appointments = const [],
+  Iterable<Map<String, dynamic>> auditEntries = const [],
+  Iterable<Map<String, String>> pendingMessages = const [],
+  Map<String, String> messageAssignees = const {},
+  Map<String, List<String>> messageTags = const {},
+  Iterable<String> quickReplyTemplates = const [],
+  Iterable<String> accountingCategories = const [],
   String dashboardPeriod = 'Все время',
   String dashboardPeriodFrom = '',
   String dashboardPeriodTo = '',
@@ -64,6 +70,7 @@ Map<String, dynamic> buildSyncPayload(
         'closedPeriod': closedPeriod == null
             ? null
             : Map<String, dynamic>.from(closedPeriod),
+        'categories': accountingCategories.toList(),
       };
     case 'Справочник услуг':
       return {
@@ -96,6 +103,26 @@ Map<String, dynamic> buildSyncPayload(
         'scope': 'knowledgeBase',
         'content': knowledgeBase,
         'versions': knowledgeVersions.map(Map<String, dynamic>.from).toList(),
+      };
+    case 'Сообщения':
+      return {
+        ...base,
+        'scope': 'messages',
+        'quickReplyTemplates': quickReplyTemplates.toList(),
+        'assignees': Map<String, String>.from(messageAssignees),
+        'tags': {
+          for (final entry in messageTags.entries)
+            entry.key: List<String>.from(entry.value),
+        },
+        'pendingMessages': pendingMessages
+            .map((message) => Map<String, String>.from(message))
+            .toList(),
+      };
+    case 'Журнал CRM':
+      return {
+        ...base,
+        'scope': 'auditOnly',
+        'entries': auditEntries.map(Map<String, dynamic>.from).toList(),
       };
     default:
       return {...base, 'scope': 'auditOnly'};

@@ -10,7 +10,7 @@ const CRM_SCHEMA_VERSION = 3;
 const CRM_AUDIT_SHEET = 'CRM_SyncAudit';
 const CRM_SUPPORTED_SCOPES = [
   'clients', 'stock', 'manualDeals', 'finance', 'appointments',
-  'serviceCatalog', 'workspace', 'knowledgeBase', 'auditOnly',
+  'serviceCatalog', 'workspace', 'knowledgeBase', 'messages', 'auditOnly',
 ];
 const CRM_MAX_CHANGES_PER_REQUEST = 20;
 const CRM_LOCK_TIMEOUT_MS = 30000;
@@ -230,7 +230,7 @@ function requireChangePermissions_(session, changes) {
   const scopeArea = {
     clients: 'clients', stock: 'stock', manualDeals: 'deals', finance: 'finance',
     appointments: 'calendar', serviceCatalog: 'integrations', workspace: 'dashboard',
-    knowledgeBase: 'bot', auditOnly: 'dashboard',
+    messages: 'messages', knowledgeBase: 'bot', auditOnly: 'dashboard',
   };
   (changes || []).forEach((change) => {
     const area = scopeArea[(change.payload || {}).scope];
@@ -462,13 +462,16 @@ function readWorkspace_(request) {
       manualDealHeaders: manual.rows.length ? manual.rows[0] : [],
       transactions: readObjectSheet_(spreadsheet, 'CRM_LocalTransactions'),
       closedPeriods: readObjectSheet_(spreadsheet, 'CRM_ClosedPeriods'),
+      financeSettings: (readObjectSheet_(spreadsheet, 'CRM_FinanceSettings')[0] || {}),
       appointments: readObjectSheet_(spreadsheet, 'CRM_Appointments'),
       serviceCatalog: readObjectSheet_(spreadsheet, 'CRM_ServiceCatalog'),
       notes: readObjectSheet_(spreadsheet, 'CRM_DashboardNotes'),
       revenuePlans: readObjectSheet_(spreadsheet, 'CRM_RevenuePlans'),
       workspaceSettings: (readObjectSheet_(spreadsheet, 'CRM_DashboardSettings')[0] || {}),
+      messageSettings: (readObjectSheet_(spreadsheet, 'CRM_MessageSettings')[0] || {}),
       knowledge: readObjectSheet_(spreadsheet, 'CRM_KnowledgeBase'),
       knowledgeVersions: readObjectSheet_(spreadsheet, 'CRM_KnowledgeVersions'),
+      audit: readSyncAudit_(spreadsheet),
     },
   });
 }
@@ -530,6 +533,9 @@ function applyChange_(spreadsheet, change) {
         ],
         payload.closedPeriods || (payload.closedPeriod ? [payload.closedPeriod] : []),
       );
+      replaceObjectSheet_(spreadsheet, 'CRM_FinanceSettings', ['categories'], [{
+        categories: payload.categories || [],
+      }]);
       return;
     case 'appointments':
       replaceObjectSheet_(spreadsheet, 'CRM_Appointments', [
@@ -553,6 +559,16 @@ function applyChange_(spreadsheet, change) {
       replaceObjectSheet_(spreadsheet, 'CRM_DashboardSettings', [
         'dashboardPeriod', 'dashboardPeriodFrom', 'dashboardPeriodTo',
       ], [payload.settings || {}]);
+      return;
+    case 'messages':
+      replaceObjectSheet_(spreadsheet, 'CRM_MessageSettings', [
+        'quickReplyTemplates', 'assignees', 'tags', 'pendingMessages',
+      ], [{
+        quickReplyTemplates: payload.quickReplyTemplates || [],
+        assignees: payload.assignees || {},
+        tags: payload.tags || {},
+        pendingMessages: payload.pendingMessages || [],
+      }]);
       return;
     case 'knowledgeBase':
       replaceObjectSheet_(spreadsheet, 'CRM_KnowledgeBase', [
@@ -598,6 +614,16 @@ function readObjectSheet_(spreadsheet, name) {
       });
       return object;
     });
+}
+
+function readSyncAudit_(spreadsheet) {
+  return readObjectSheet_(spreadsheet, CRM_AUDIT_SHEET).slice(-500).map((entry) => ({
+    action: 'Синхронизация',
+    entity: String(entry.entity || ''),
+    details: String(entry.details || ''),
+    date: String(entry.createdAt || entry.receivedAt || ''),
+    actor: 'CRM',
+  }));
 }
 
 function parseScalar_(value) {

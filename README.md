@@ -92,9 +92,11 @@ HTTPS-теле запроса: web app не передаёт заголовок 
 Endpoint принимает не более 20 изменений за запрос и снимки областей
 `clients`, `stock`, `manualDeals`, `finance`, `appointments`,
 `serviceCatalog`, `workspace` и `knowledgeBase`. События календаря, заметки,
-планы и справочник услуг попадают в отдельные служебные листы; настройки
-интеграций передаются как `auditOnly`. Неизвестный scope отклоняется, а не
-отмечается успешным.
+планы и справочник услуг попадают в отдельные служебные листы. Scope
+`messages` переносит общую очередь ответов, шаблоны, теги и ответственных
+диалогов; scope `finance` также переносит общие категории бухгалтерии.
+Настройки интеграций передаются как `auditOnly`. Неизвестный scope
+отклоняется, а не отмечается успешным.
 
 При заданном `CRM_SYNC_ENDPOINT` приложение также читает листы `Август`,
 `Основное` и `Расходы` защищённым POST-запросом `operation: readSheet` с тем же
@@ -132,7 +134,8 @@ flutter test
 `CRM_Stock`, `CRM_StockMovements`, `CRM_ManualDeals`,
 `CRM_LocalTransactions`, `CRM_ClosedPeriods`, `CRM_Appointments`,
 `CRM_ServiceCatalog`, `CRM_DashboardNotes`, `CRM_RevenuePlans`,
-`CRM_KnowledgeBase`, `CRM_KnowledgeVersions` и `CRM_SyncAudit`. Они не
+`CRM_KnowledgeBase`, `CRM_KnowledgeVersions`, `CRM_FinanceSettings`,
+`CRM_MessageSettings` и `CRM_SyncAudit`. Они не
 перезаписывают рабочие листы и являются версионированным слоем миграции на
 backend. В них используются стабильные `id`: клиента, сделки, товара,
 движения склада, финансовой операции и записи аудита. У клиента также

@@ -19,6 +19,7 @@ import 'schema.dart';
 import 'xlsx_export.dart';
 import 'permissions.dart';
 import 'navigation.dart';
+import 'layout.dart';
 import 'finance.dart';
 import 'calendar_logic.dart';
 import 'sync_queue.dart';
@@ -1618,6 +1619,12 @@ $instructions
     knowledgeBase: knowledgeBase,
     knowledgeVersions: knowledgeVersions.map((item) => item.toJson()),
     appointments: calendarEvents.map(Map<String, dynamic>.from),
+    auditEntries: auditEntries.map((item) => item.toJson()),
+    pendingMessages: pendingMessages,
+    messageAssignees: messageAssignees,
+    messageTags: messageTags,
+    quickReplyTemplates: quickReplyTemplates,
+    accountingCategories: accountingCategories,
     dashboardPeriod: dashboardPeriod,
     dashboardPeriodFrom: dashboardCustomFrom?.toIso8601String() ?? '',
     dashboardPeriodTo: dashboardCustomTo?.toIso8601String() ?? '',
@@ -2528,6 +2535,9 @@ $instructions
       readMessageDialogs.toList(),
     );
     await prefs.setString('pending_messages', jsonEncode(pendingMessages));
+    if (_crmDataLoaded) {
+      _enqueueCloudSnapshot('Сообщения', 'Обновлены общие настройки сообщений');
+    }
   }
 
   Future<void> _backupLocalData() async {
@@ -3113,8 +3123,12 @@ $instructions
     await _saveMessageMeta();
   }
 
-  Future<void> _saveAccountingCategories() async =>
-      prefs.setStringList('accounting_categories', accountingCategories);
+  Future<void> _saveAccountingCategories() async {
+    await prefs.setStringList('accounting_categories', accountingCategories);
+    if (_crmDataLoaded) {
+      _enqueueCloudSnapshot('Бухгалтерия', 'Обновлены категории бухгалтерии');
+    }
+  }
 
   Future<void> _saveCrmData() async {
     if (!_crmDataLoaded) {
@@ -3815,6 +3829,75 @@ $instructions
           cloudSettings['dashboardPeriodTo']?.toString() ?? '',
         );
       }
+      final cloudFinanceSettings = cloud['financeSettings'];
+      if (cloudFinanceSettings is Map) {
+        final categories = cloudFinanceSettings['categories'];
+        if (categories is List && categories.isNotEmpty) {
+          accountingCategories = categories
+              .map((value) => value.toString().trim())
+              .where((value) => value.isNotEmpty)
+              .toSet()
+              .toList();
+        }
+      }
+      final cloudMessageSettings = cloud['messageSettings'];
+      if (cloudMessageSettings is Map) {
+        final templates = cloudMessageSettings['quickReplyTemplates'];
+        if (templates is List && templates.isNotEmpty) {
+          quickReplyTemplates = templates
+              .map((value) => value.toString())
+              .toList();
+        }
+        final assignees = cloudMessageSettings['assignees'];
+        if (assignees is Map) {
+          messageAssignees
+            ..clear()
+            ..addAll(
+              assignees.map(
+                (key, value) => MapEntry(key.toString(), value.toString()),
+              ),
+            );
+        }
+        final tags = cloudMessageSettings['tags'];
+        if (tags is Map) {
+          messageTags
+            ..clear()
+            ..addAll(
+              tags.map(
+                (key, value) => MapEntry(
+                  key.toString(),
+                  (value as List? ?? const [])
+                      .map((tag) => tag.toString())
+                      .toList(),
+                ),
+              ),
+            );
+        }
+        final queue = cloudMessageSettings['pendingMessages'];
+        if (queue is List) {
+          pendingMessages
+            ..clear()
+            ..addAll(
+              queue.whereType<Map>().map(
+                (item) => Map<String, String>.from(
+                  item.map(
+                    (key, value) => MapEntry(key.toString(), value.toString()),
+                  ),
+                ),
+              ),
+            );
+        }
+      }
+      final cloudAudit = cloud['audit'];
+      if (cloudAudit is List) {
+        auditEntries
+          ..clear()
+          ..addAll(
+            cloudAudit.whereType<Map>().map(
+              (item) => AuditEntry.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
+      }
       final cloudKnowledge = objects('knowledge');
       final cloudKnowledgeText = cloudKnowledge.isEmpty
           ? ''
@@ -3829,6 +3912,8 @@ $instructions
       }
       await _saveServices();
       await _saveManualDeals();
+      await _saveMessageMeta();
+      await _saveAccountingCategories();
       // _crmDataLoaded is intentionally still false during startup, so save
       // the restored cache explicitly without enabling early user writes.
       await prefs.setString(
@@ -4072,6 +4157,9 @@ $instructions
       now: now,
       hasUnreadNotifications: notifications.any((item) => !item.read),
       onOpenNotifications: _showNotificationCenter,
+      selectedPage: selected,
+      mobileDestinations: _mobileDestinations(),
+      onPageSelected: _selectPage,
       onThemeChanged: (next) {
         widget.onThemeChanged(next);
         unawaited(
@@ -4111,12 +4199,31 @@ $instructions
     userRole: currentRole,
     onSwitchUser: () => unawaited(_switchUser()),
     onLogout: () => unawaited(_confirmLogout()),
-    onSelect: (index) {
-      setState(() => selected = index);
-      if (index == 4) _loadAccounting();
-      if (index == 2 || index == 0) _loadDeals();
-    },
+    onSelect: _selectPage,
   );
+
+  List<DashboardMobileDestination> _mobileDestinations() {
+    const primaryPages = [0, 1, 2, 3, 7];
+    return primaryPages
+        .where((index) => _canView(_pagePermissionArea(index)))
+        .map(
+          (index) => DashboardMobileDestination(
+            pageIndex: index,
+            label: crmPages[index].title,
+            icon: crmPageIcons[index],
+          ),
+        )
+        .toList();
+  }
+
+  void _selectPage(int index) {
+    setState(() => selected = index);
+    if (index == 4) _loadAccounting();
+    if (index == 2 || index == 0) _loadDeals();
+    if (usesCompactNavigation(MediaQuery.sizeOf(context).width)) {
+      unawaited(Navigator.of(context).maybePop());
+    }
+  }
 
   Widget _pageBody() {
     if (selected == 0) return _overview();
@@ -9993,6 +10100,7 @@ $instructions
         await prefs.setBool('crm_server_managed_secrets', true);
       }
     },
+    onFullSync: _syncAllCrmData,
     onSwitchUser: _switchUser,
     onLogout: _confirmLogout,
     hasSyncCredentials: syncEndpoint.isNotEmpty && syncToken.isNotEmpty,
@@ -10004,6 +10112,55 @@ $instructions
     onExportPendingChanges: _exportPendingChanges,
     auditEntries: auditEntries,
   );
+
+  Future<void> _syncAllCrmData() async {
+    if (currentRole != 'Владелец' ||
+        syncEndpoint.isEmpty ||
+        syncToken.isEmpty) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Выгрузить все данные CRM?'),
+        content: const Text(
+          'Текущие клиенты, сделки, склад, финансы, записи, услуги, заметки, база знаний и общие настройки сообщений будут сохранены на общем CRM-сервере. Выполняйте это с компьютера владельца с актуальными данными.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Выгрузить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    const snapshots = [
+      ('Клиент', 'Полная выгрузка клиентов'),
+      ('Товар', 'Полная выгрузка склада'),
+      ('Сделка', 'Полная выгрузка сделок'),
+      ('Бухгалтерия', 'Полная выгрузка бухгалтерии'),
+      ('Запись', 'Полная выгрузка записей'),
+      ('Справочник услуг', 'Полная выгрузка услуг'),
+      ('Рабочее пространство', 'Полная выгрузка заметок и планов'),
+      ('База знаний', 'Полная выгрузка базы знаний'),
+      ('Сообщения', 'Полная выгрузка общих сообщений'),
+      ('Журнал CRM', 'Полная выгрузка журнала'),
+    ];
+    for (final snapshot in snapshots) {
+      localChangeQueue.enqueue(
+        entity: snapshot.$1,
+        details: snapshot.$2,
+        payload: _syncPayload(snapshot.$1),
+      );
+    }
+    await _saveCrmData();
+    await _syncPendingChanges();
+  }
 
   Future<void> _setupAi() async {
     if (!canManageIntegrations) return;
