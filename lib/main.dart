@@ -14,7 +14,6 @@ import 'avito_cache.dart';
 import 'config.dart';
 import 'repositories.dart';
 import 'api_client.dart';
-import 'validation.dart';
 import 'schema.dart';
 import 'xlsx_export.dart';
 import 'permissions.dart';
@@ -12509,24 +12508,6 @@ $instructions
       }
       if (updated[21].isEmpty) {
         updated[21] = 'deal-${DateTime.now().microsecondsSinceEpoch}';
-      }
-      if (validateDealFields(
-        revenue: updated[5],
-        expenses: updated[6],
-      ).isNotEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Проверьте суммы: они не могут быть отрицательными',
-              ),
-            ),
-          );
-        }
-        for (final f in fields) {
-          f.dispose();
-        }
-        return;
       }
       final index = manualDealRows.indexOf(row);
       final calculationChanged = dealCalculationChanged(row, updated);
