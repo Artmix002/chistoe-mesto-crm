@@ -304,8 +304,7 @@ class Deal {
   double get profit => revenue - expenses;
   List<String> validate() {
     final errors = <String>[];
-    if (clientName.trim().isEmpty) errors.add('Клиент обязателен');
-    if (revenue <= 0) errors.add('Выручка должна быть больше нуля');
+    if (revenue < 0) errors.add('Выручка не может быть отрицательной');
     if (expenses < 0) errors.add('Расходы не могут быть отрицательными');
     return errors;
   }

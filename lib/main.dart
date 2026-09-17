@@ -12511,27 +12511,14 @@ $instructions
         updated[21] = 'deal-${DateTime.now().microsecondsSinceEpoch}';
       }
       if (validateDealFields(
-        client: updated[17],
         revenue: updated[5],
         expenses: updated[6],
       ).isNotEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Укажите клиента и корректные суммы')),
-          );
-        }
-        for (final f in fields) {
-          f.dispose();
-        }
-        return;
-      }
-      final selectedService = _serviceByName(updated[3]);
-      if (selectedService == null || selectedService.archived) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'Для сделки выберите услугу из активного справочника',
+                'Проверьте суммы: они не могут быть отрицательными',
               ),
             ),
           );

@@ -504,9 +504,19 @@ void main() {
         date: '',
         clientId: '',
         clientName: '',
-        revenue: 0,
+        revenue: -1,
       ).validate(),
       isNotEmpty,
+    );
+    expect(
+      Deal(
+        id: '3',
+        date: '',
+        clientId: '',
+        clientName: '',
+        revenue: 0,
+      ).validate(),
+      isEmpty,
     );
   });
   test('legacy deal row maps to typed deal', () {
@@ -579,10 +589,8 @@ void main() {
     expect(recalculated[9], '123');
   });
   test('deal field validation rejects invalid values', () {
-    expect(
-      validateDealFields(client: '', revenue: '-1', expenses: 'x'),
-      hasLength(3),
-    );
+    expect(validateDealFields(revenue: '-1', expenses: 'x'), hasLength(2));
+    expect(validateDealFields(revenue: '', expenses: ''), isEmpty);
   });
   test('client serializes history', () {
     final c = Client(
