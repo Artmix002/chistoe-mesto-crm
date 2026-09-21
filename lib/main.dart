@@ -23,6 +23,7 @@ import 'finance.dart';
 import 'calendar_logic.dart';
 import 'sync_queue.dart';
 import 'sync_payload.dart';
+import 'sync_status.dart';
 import 'app_notification.dart';
 import 'deal_logic.dart';
 import 'client_logic.dart';
@@ -175,7 +176,7 @@ class Dashboard extends StatefulWidget {
   State<Dashboard> createState() => _DashboardState();
 }
 
-class _DashboardState extends State<Dashboard> {
+class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   SheetsRepository get _sheets => SheetsRepository(
     currentSheetId,
     _apiClient,
@@ -191,18 +192,10 @@ class _DashboardState extends State<Dashboard> {
   final RequestCancellation _lifecycleCancellation = RequestCancellation();
   late final ApiClient _apiClient;
   CrmAuthService? _authService;
-  // Существующие локальные установки остаются доступными, пока владелец не
-  // укажет общий сервер. Как только сервер настроен, вход по PIN обязателен.
-  CrmSession? _session = CrmSession(
-    token: '',
-    user: CrmUser(
-      id: 'owner',
-      name: 'Владелец',
-      role: 'Владелец',
-      active: true,
-    ),
-    configuration: const {},
-  );
+  bool _serverConfigurationInitialized = false;
+  // У CRM нет локального анонимного режима: рабочее пространство открывается
+  // только после проверки серверной сессии.
+  CrmSession? _session;
   List<CrmUser> _serverUsers = [];
   bool _authLoading = true;
   String? _authError;
@@ -239,8 +232,11 @@ class _DashboardState extends State<Dashboard> {
       widget.darkMode ? const Color(0xFFB7BDC7) : const Color(0xFF777D87);
   int selected = 0;
   bool loading = false;
-  int _sheetsRequestId = 0;
-  RequestCancellation? _sheetsCancellation;
+  int _dealsRequestId = 0;
+  int _accountingRequestId = 0;
+  int _activeSheetLoads = 0;
+  RequestCancellation? _dealsCancellation;
+  RequestCancellation? _accountingCancellation;
   String? sheetError;
   bool sheetsOfflineMode = false;
   DateTime? lastSheetsSync;
@@ -250,6 +246,12 @@ class _DashboardState extends State<Dashboard> {
   final List<CrmNotification> notifications = [];
   String syncEndpoint = AppConfig.syncEndpoint;
   String syncToken = '';
+  Map<String, String> dataSources = const {
+    'deals': SheetsSchema.dealsSheet,
+    'accounting': SheetsSchema.accountingSheet,
+    'expenses': SheetsSchema.expensesSheet,
+    'appointments': 'CRM_Appointments',
+  };
   String calendarClientSecret = '';
   final TextEditingController sheetController = TextEditingController(
     text: 'https://docs.google.com/spreadsheets/d/${AppConfig.sheetId}/edit',
@@ -296,18 +298,23 @@ class _DashboardState extends State<Dashboard> {
   DateTime? customFrom, customTo;
   Timer? clock;
   Timer? pendingChangesSyncTimer;
+  Timer? workspaceRefreshTimer;
   Timer? appointmentReminderTimer;
   final Set<String> sentAppointmentReminderKeys = {};
   bool preferencesLoaded = false;
   // Prevent an early user action or background callback from writing empty
   // collections before the persisted CRM data has finished loading.
   bool _crmDataLoaded = false;
+  bool _workspaceRefreshInProgress = false;
+  bool _workspaceSaveInProgress = false;
   bool calendarConnected = false;
   String? calendarStatus;
   String? calendarAccessToken;
   String? calendarRefreshToken;
   final Map<String, String> messengerSecrets = {};
   List<Map<String, dynamic>> calendarEvents = [];
+  final Set<String> _seenAppointmentIds = {};
+  bool _appointmentNotificationsReady = false;
   List<Map<String, dynamic>> archivedCalendarEvents = [];
   List<Map<String, dynamic>> availableCalendars = [];
   String calendarId = 'primary';
@@ -368,8 +375,9 @@ class _DashboardState extends State<Dashboard> {
 - Отвечай только подтверждёнными фактами из этой базы.
 - Если подтверждённого ответа нет — не придумывай ответ и передай вопрос сотруднику.
 
-## Услуги и цены
-- Заполняются в справочнике услуг CRM. Цена зависит от класса автомобиля.
+## Услуги
+- Состав, сроки и правила работ ведутся в справочнике услуг CRM.
+- Стоимость сотрудник указывает вручную в конкретной записи или сделке.
 
 ## Передача сотруднику
 - Если вопроса нет в базе, сообщи CRM, что нужен ответ сотрудника.
@@ -473,7 +481,10 @@ class _DashboardState extends State<Dashboard> {
 
   Uri? get _serverEndpoint {
     final saved = prefs.getString('crm_server_url') ?? '';
-    return Uri.tryParse(saved.isNotEmpty ? saved : AppConfig.serverUrl);
+    // CRM_SERVER_URL в релизе является единым источником для iPhone, macOS
+    // и Windows. Локальное поле нужно лишь старым сборкам без dart-define.
+    final configured = AppConfig.serverUrl.trim();
+    return Uri.tryParse(configured.isNotEmpty ? configured : saved);
   }
 
   Future<void> _initializeAuth() async {
@@ -481,20 +492,40 @@ class _DashboardState extends State<Dashboard> {
     if (endpoint == null || endpoint.scheme != 'https') {
       if (mounted) {
         setState(() {
+          _authService = null;
+          _session = null;
           _authLoading = false;
-          _authError = null;
+          _authError =
+              'CRM-сервер не задан. Установите сборку с CRM_SERVER_URL.';
         });
       }
       return;
     }
     _authService = CrmAuthService(endpoint: endpoint, client: _apiClient);
+    final storedToken = await secretStore.read('crm_session_token');
+    if (storedToken != null && storedToken.isNotEmpty) {
+      final profile = currentUser;
+      if (profile != null) {
+        _session = CrmSession(
+          token: storedToken,
+          user: CrmUser(
+            id: profile.id,
+            name: profile.name,
+            role: profile.role,
+            active: profile.active,
+            permissions: profile.permissions,
+          ),
+          configuration: const {},
+        );
+        syncEndpoint = endpoint.toString();
+        syncToken = storedToken;
+        if (mounted) setState(() => _authLoading = false);
+        unawaited(_validateStoredSession(storedToken));
+        return;
+      }
+    }
     try {
       _serverUsers = await _authService!.listUsers();
-      final storedToken = await secretStore.read('crm_session_token');
-      if (storedToken != null && storedToken.isNotEmpty) {
-        _session = await _authService!.resume(storedToken);
-        _applyServerSession(_session!);
-      }
       if (mounted) setState(() => _authLoading = false);
     } catch (error) {
       if (mounted) {
@@ -504,6 +535,34 @@ class _DashboardState extends State<Dashboard> {
           _session = null;
         });
       }
+    }
+  }
+
+  Future<void> _validateStoredSession(String token) async {
+    final service = _authService;
+    if (service == null) return;
+    try {
+      final resumed = await service.resume(token);
+      _serverUsers = await service.listUsers();
+      if (!mounted || _session?.token != token) return;
+      setState(() {
+        _authError = null;
+        _session = resumed;
+        _applyServerSession(resumed);
+      });
+      unawaited(_saveUserProfiles());
+    } on CrmAuthException catch (error) {
+      if (error.code != 'SESSION_INVALID' && error.code != 'ACCOUNT_REVOKED') {
+        return;
+      }
+      await secretStore.delete('crm_session_token');
+      if (!mounted || _session?.token != token) return;
+      setState(() {
+        _session = null;
+        _authError = 'Сессия завершена. Войдите по PIN.';
+      });
+    } catch (_) {
+      // Network errors preserve the local session and offline workspace.
     }
   }
 
@@ -596,11 +655,50 @@ class _DashboardState extends State<Dashboard> {
         )
         .toList();
     final configuration = session.configuration;
+    _serverConfigurationInitialized =
+        configuration.containsKey('dataSources') ||
+        configuration.containsKey('messengers') ||
+        configuration.containsKey('avitoAccounts');
     final sheetUrl = configuration['sheetUrl']?.toString() ?? '';
     if (sheetUrl.isNotEmpty) sheetController.text = sheetUrl;
+    final configuredSources = configuration['dataSources'];
+    if (configuredSources is Map) {
+      final nextSources = Map<String, String>.from(dataSources);
+      configuredSources.forEach((key, value) {
+        final source = value.toString().trim();
+        if (source.isNotEmpty) nextSources[key.toString()] = source;
+      });
+      dataSources = nextSources;
+    }
+    final configuredMessengers = configuration['messengers'];
+    if (configuredMessengers is Map) {
+      configuredMessengers.forEach((key, value) {
+        if (messengerConnected.containsKey(key.toString()) && value == true) {
+          messengerConnected[key.toString()] = true;
+          messengerStatus[key.toString()] = 'Подключён через CRM-сервер';
+        }
+      });
+    }
+    final configuredAvito = configuration['avitoAccounts'];
+    if (configuredAvito is List && configuredAvito.isNotEmpty) {
+      avitoAccounts = configuredAvito
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    }
     syncEndpoint = _serverEndpoint?.toString() ?? syncEndpoint;
     syncToken = session.token;
   }
+
+  String _dataSource(String key, String fallback) =>
+      dataSources[key]?.trim().isNotEmpty == true
+      ? dataSources[key]!.trim()
+      : fallback;
+
+  bool get _usesGoogleCalendar =>
+      _dataSource('appointments', 'CRM_Appointments').toLowerCase() ==
+          'google_calendar' &&
+      calendarAccessToken != null;
 
   Future<void> _login(String userId, String pin) async {
     final service = _authService;
@@ -616,10 +714,12 @@ class _DashboardState extends State<Dashboard> {
         _session = session;
         _applyServerSession(session);
       });
+      await _saveUserProfiles();
+      // На первом входе _loadPrefs завершился на экране PIN. После успешной
+      // авторизации восстанавливаем кэш, очередь и общее рабочее пространство.
+      await _loadPrefs();
+      if (!mounted) return;
       _audit('Вход в CRM', 'Сессия', session.user.name);
-      unawaited(_restoreCloudWorkspaceIfAvailable());
-      unawaited(_loadDeals());
-      unawaited(_loadAccounting());
     } catch (error) {
       if (mounted) setState(() => _authError = _safeAuthError(error));
     }
@@ -762,12 +862,14 @@ class _DashboardState extends State<Dashboard> {
 
   Future<void> _migrateLocalConfiguration({
     required bool clearLocalSecrets,
+    bool silent = false,
   }) async {
     final service = _authService;
     final session = _session;
     if (service == null || session == null) return;
     final configuration = <String, dynamic>{
       'sheetUrl': sheetController.text.trim(),
+      'dataSources': dataSources,
       'syncToken': syncToken,
       'calendarAccessToken': calendarAccessToken ?? '',
       'calendarRefreshToken': calendarRefreshToken ?? '',
@@ -791,8 +893,15 @@ class _DashboardState extends State<Dashboard> {
       if (serverConfig['sheetUrl']?.toString().isNotEmpty == true) {
         sheetController.text = serverConfig['sheetUrl'].toString();
       }
+      final configuredSources = serverConfig['dataSources'];
+      if (configuredSources is Map) {
+        dataSources = configuredSources.map(
+          (key, value) => MapEntry(key.toString(), value.toString()),
+        );
+      }
       if (clearLocalSecrets) await _clearLocalIntegrationSecrets();
-      if (mounted) {
+      _serverConfigurationInitialized = true;
+      if (mounted && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -804,7 +913,7 @@ class _DashboardState extends State<Dashboard> {
         );
       }
     } catch (error) {
-      if (mounted) {
+      if (mounted && !silent) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(_safeAuthError(error))));
@@ -844,6 +953,7 @@ class _DashboardState extends State<Dashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _apiClient = ApiClient(
       timeout: AppConstants.networkTimeout,
       defaultCancellation: _lifecycleCancellation,
@@ -879,6 +989,9 @@ class _DashboardState extends State<Dashboard> {
         unawaited(_syncPendingChanges(silent: true, respectBackoff: true));
       }
     });
+    workspaceRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_refreshWorkspaceFromCloud());
+    });
     appointmentReminderTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => unawaited(_sendScheduledAppointmentReminders()),
@@ -887,11 +1000,14 @@ class _DashboardState extends State<Dashboard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _lifecycleCancellation.cancel();
-    _sheetsCancellation?.cancel();
+    _dealsCancellation?.cancel();
+    _accountingCancellation?.cancel();
     clock?.cancel();
     pendingMessageTimer?.cancel();
     pendingChangesSyncTimer?.cancel();
+    workspaceRefreshTimer?.cancel();
     appointmentReminderTimer?.cancel();
     avitoAudioPositionSubscription?.cancel();
     avitoAudioStateSubscription?.cancel();
@@ -910,6 +1026,13 @@ class _DashboardState extends State<Dashboard> {
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshWorkspaceFromCloud());
+    }
+  }
+
   Future<void> _loadPrefs() async {
     prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
@@ -918,11 +1041,7 @@ class _DashboardState extends State<Dashboard> {
     // При входе через общий CRM-сервер ключи интеграций остаются только на
     // сервере. Не трогаем локальную связку ключей при каждом запуске — это
     // исключает лишний системный запрос macOS и не выдаёт секреты сотруднику.
-    final configuredServer =
-        prefs.getString('crm_server_url') ?? AppConfig.serverUrl;
-    if (configuredServer.trim().isEmpty) {
-      await _loadSecureTokens();
-    }
+    await _loadSecureTokens();
     if (!mounted) return;
     currentRole = prefs.getString('crm_role') ?? 'Владелец';
     if (currentRole == 'Просмотр') currentRole = 'Только просмотр';
@@ -971,7 +1090,7 @@ class _DashboardState extends State<Dashboard> {
     currentRole = activeUser.role;
     await _initializeAuth();
     if (!mounted) return;
-    if (_session == null && _authService != null) {
+    if (_session == null) {
       preferencesLoaded = true;
       return;
     }
@@ -1001,6 +1120,13 @@ class _DashboardState extends State<Dashboard> {
         );
       }
     } catch (_) {}
+    notifications.removeWhere(
+      (notification) => notification.title != 'Новая запись',
+    );
+    await prefs.setString(
+      'crm_notifications',
+      jsonEncode(notifications.map((item) => item.toJson()).toList()),
+    );
     final savedSync = prefs.getString('sheets_last_sync');
     if (savedSync != null) lastSheetsSync = DateTime.tryParse(savedSync);
     final savedClosedPeriods = prefs.getString('closed_accounting_periods');
@@ -1214,6 +1340,11 @@ class _DashboardState extends State<Dashboard> {
             .toList();
       }
     } catch (_) {}
+    _seenAppointmentIds.addAll(
+      prefs.getStringList('seen_appointment_ids') ?? const [],
+    );
+    _appointmentNotificationsReady =
+        prefs.getBool('appointment_notifications_ready') ?? false;
     _loadAvitoAccountsFromPrefs();
     _loadAvitoAiCache();
     await _loadSecureAvitoAccounts();
@@ -1307,6 +1438,17 @@ class _DashboardState extends State<Dashboard> {
       _loadCalendarList();
       _loadCalendarEvents();
     }
+    if (!_serverConfigurationInitialized &&
+        currentRole == 'Владелец' &&
+        (calendarAccessToken != null ||
+            messengerSecrets.isNotEmpty ||
+            avitoAccounts.any(
+              (account) =>
+                  (account['clientSecret']?.toString().isNotEmpty ?? false),
+            ) ||
+            aiApiKey.isNotEmpty)) {
+      await _migrateLocalConfiguration(clearLocalSecrets: false, silent: true);
+    }
     _saveManualDeals();
     if (avitoAccounts.isNotEmpty) {
       _connectAvito(silent: true);
@@ -1382,6 +1524,10 @@ class _DashboardState extends State<Dashboard> {
           ),
         ),
         actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(d, true),
+            child: const Text('Позже'),
+          ),
           if (progress.isReadyToFinish)
             ElevatedButton(
               onPressed: () => Navigator.pop(d, true),
@@ -1432,6 +1578,7 @@ class _DashboardState extends State<Dashboard> {
   /// never leaves stale rules behind.
   Future<void> _syncServiceKnowledge({
     String source = 'справочник услуг',
+    bool sync = true,
   }) async {
     var updated = knowledgeBase;
     for (final item in serviceCatalog) {
@@ -1443,12 +1590,6 @@ class _DashboardState extends State<Dashboard> {
         updated = updated.replaceAll(sectionPattern, '');
         continue;
       }
-      final prices = VehicleClass.values
-          .map(
-            (vehicleClass) =>
-                '- ${vehicleClass.label}: ${item.priceFor(vehicleClass).toStringAsFixed(0)} ₽',
-          )
-          .join('\n');
       final instructions = item.botInstructions.trim().isEmpty
           ? '- Дополнительные правила для этой услуги не заданы.'
           : item.botInstructions
@@ -1466,8 +1607,6 @@ class _DashboardState extends State<Dashboard> {
 ## Услуга: ${item.name}
 - Категория: ${item.category}
 - Длительность: ${item.durationHours.toStringAsFixed(1)} ч
-### Цены по классу автомобиля
-$prices
 ### Правила ответа по услуге
 $instructions
 <!-- /service:${item.id} -->
@@ -1480,7 +1619,7 @@ $instructions
     }
     if (updated == knowledgeBase) return;
     knowledgeBase = updated.trim();
-    await _saveKnowledgeBase(source: source, addVersion: false);
+    await _saveKnowledgeBase(source: source, addVersion: false, sync: sync);
   }
 
   void _migrateLegacyServicesToCatalog() {
@@ -1519,29 +1658,35 @@ $instructions
   List<ServiceCatalogItem> get _activeServiceCatalog =>
       serviceCatalog.where((item) => !item.archived).toList();
 
-  Future<void> _saveWorkspaceData({bool sync = true}) async {
-    await prefs.setString(
-      'dashboard_notes',
-      jsonEncode(dashboardNotes.map((item) => item.toJson()).toList()),
-    );
-    await prefs.setString(
-      'dashboard_revenue_plans',
-      jsonEncode(revenuePlans.map((item) => item.toJson()).toList()),
-    );
-    await prefs.setString('dashboard_period', dashboardPeriod);
-    await prefs.setString(
-      'dashboard_period_from',
-      dashboardCustomFrom?.toIso8601String() ?? '',
-    );
-    await prefs.setString(
-      'dashboard_period_to',
-      dashboardCustomTo?.toIso8601String() ?? '',
-    );
-    if (sync && _crmDataLoaded) {
-      _enqueueCloudSnapshot(
-        'Рабочее пространство',
-        'Обновлены заметки или планы',
+  Future<void> _saveWorkspaceData({
+    bool sync = true,
+    String entity = 'Рабочее пространство',
+    String details = 'Обновлены настройки дашборда',
+  }) async {
+    _workspaceSaveInProgress = true;
+    try {
+      await prefs.setString(
+        'dashboard_notes',
+        jsonEncode(dashboardNotes.map((item) => item.toJson()).toList()),
       );
+      await prefs.setString(
+        'dashboard_revenue_plans',
+        jsonEncode(revenuePlans.map((item) => item.toJson()).toList()),
+      );
+      await prefs.setString('dashboard_period', dashboardPeriod);
+      await prefs.setString(
+        'dashboard_period_from',
+        dashboardCustomFrom?.toIso8601String() ?? '',
+      );
+      await prefs.setString(
+        'dashboard_period_to',
+        dashboardCustomTo?.toIso8601String() ?? '',
+      );
+      if (sync && _crmDataLoaded) {
+        _enqueueCloudSnapshot(entity, details);
+      }
+    } finally {
+      _workspaceSaveInProgress = false;
     }
   }
 
@@ -1749,7 +1894,7 @@ $instructions
   }
 
   Future<void> _editDashboardNote([StickyNote? note]) async {
-    if (!_canEdit('admin')) return;
+    if (!_canEdit('dashboard')) return;
     if (note == null && dashboardNotes.length >= 8) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1799,14 +1944,17 @@ $instructions
       note.text = text;
       note.updatedAt = DateTime.now().toIso8601String();
     }
-    await _saveWorkspaceData();
+    await _saveWorkspaceData(
+      entity: 'Заметки',
+      details: note == null ? 'Создана заметка' : 'Изменена заметка',
+    );
     if (mounted) setState(() {});
   }
 
   Future<void> _deleteDashboardNote(StickyNote note) async {
-    if (!_canEdit('admin')) return;
+    if (!_canEdit('dashboard')) return;
     dashboardNotes.removeWhere((item) => item.id == note.id);
-    await _saveWorkspaceData();
+    await _saveWorkspaceData(entity: 'Заметки', details: 'Удалена заметка');
     if (mounted) setState(() {});
   }
 
@@ -1905,7 +2053,12 @@ $instructions
     } else {
       revenuePlans[revenuePlans.indexOf(existing)] = next;
     }
-    await _saveWorkspaceData();
+    await _saveWorkspaceData(
+      entity: 'План выручки',
+      details: existing == null
+          ? 'Создан план выручки'
+          : 'Изменён план выручки',
+    );
     if (mounted) setState(() {});
   }
 
@@ -2525,7 +2678,27 @@ $instructions
 
   String _messengerToken(String channel) => messengerSecrets[channel] ?? '';
 
-  Future<void> _saveMessageMeta() async {
+  Future<Map<String, dynamic>> _proxyIntegration(
+    String action,
+    Map<String, dynamic> payload,
+  ) async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) {
+      throw StateError('Войдите в общую CRM, чтобы использовать интеграцию.');
+    }
+    final response = await service.proxy(session.token, {
+      'action': action,
+      'payload': payload,
+    });
+    final body = response['body'];
+    if (body is! Map) {
+      throw StateError('CRM-сервер вернул некорректный ответ интеграции.');
+    }
+    return Map<String, dynamic>.from(body);
+  }
+
+  Future<void> _saveMessageMeta({bool sync = true}) async {
     await prefs.setString('message_assignees', jsonEncode(messageAssignees));
     await prefs.setString('message_tags', jsonEncode(messageTags));
     await prefs.setStringList('quick_reply_templates', quickReplyTemplates);
@@ -2534,7 +2707,7 @@ $instructions
       readMessageDialogs.toList(),
     );
     await prefs.setString('pending_messages', jsonEncode(pendingMessages));
-    if (_crmDataLoaded) {
+    if (sync && _crmDataLoaded) {
       _enqueueCloudSnapshot('Сообщения', 'Обновлены общие настройки сообщений');
     }
   }
@@ -3122,9 +3295,9 @@ $instructions
     await _saveMessageMeta();
   }
 
-  Future<void> _saveAccountingCategories() async {
+  Future<void> _saveAccountingCategories({bool sync = true}) async {
     await prefs.setStringList('accounting_categories', accountingCategories);
-    if (_crmDataLoaded) {
+    if (sync && _crmDataLoaded) {
       _enqueueCloudSnapshot('Бухгалтерия', 'Обновлены категории бухгалтерии');
     }
   }
@@ -3182,13 +3355,19 @@ $instructions
     String title,
     String message,
   ) {
+    CrmLogger.debug('$title: $message', name: 'crm.notification');
+  }
+
+  void _pushIncomingAppointmentNotification(Map<String, dynamic> event) {
     notifications.insert(
       0,
       CrmNotification(
         id: 'notification-${DateTime.now().microsecondsSinceEpoch}',
-        title: title,
-        message: CrmLogger.redact(message),
-        level: level,
+        title: 'Новая запись',
+        message: CrmLogger.redact(
+          '${event['summary']?.toString().trim().isNotEmpty == true ? event['summary'] : 'Без названия'} · ${_eventTime(event)}',
+        ),
+        level: CrmNotificationLevel.info,
         createdAt: DateTime.now().toIso8601String(),
       ),
     );
@@ -3202,6 +3381,43 @@ $instructions
         jsonEncode(notifications.map((item) => item.toJson()).toList()),
       ),
     );
+  }
+
+  Future<void> _recordIncomingAppointments(
+    Iterable<Map<String, dynamic>> events,
+  ) async {
+    final received = events
+        .where((event) => event['id']?.toString().trim().isNotEmpty == true)
+        .toList(growable: false);
+    if (!_appointmentNotificationsReady) {
+      _seenAppointmentIds.addAll(
+        received.map((event) => event['id'].toString()),
+      );
+      _appointmentNotificationsReady = true;
+    } else {
+      for (final event in received) {
+        final id = event['id'].toString();
+        if (_seenAppointmentIds.add(id)) {
+          final private =
+              ((event['extendedProperties'] as Map?)?['private'] as Map?) ??
+              const {};
+          if (private['createdBy']?.toString() != currentUserId) {
+            _pushIncomingAppointmentNotification(event);
+          }
+        }
+      }
+    }
+    if (_seenAppointmentIds.length > 500) {
+      final idsToRemove = _seenAppointmentIds
+          .take(_seenAppointmentIds.length - 500)
+          .toList(growable: false);
+      _seenAppointmentIds.removeAll(idsToRemove);
+    }
+    await prefs.setStringList(
+      'seen_appointment_ids',
+      _seenAppointmentIds.toList(),
+    );
+    await prefs.setBool('appointment_notifications_ready', true);
   }
 
   Future<void> _showNotificationCenter() async {
@@ -3322,6 +3538,7 @@ $instructions
       );
       if (!mounted) return;
       setState(() => lastPendingChangesSync = DateTime.now());
+      unawaited(_refreshWorkspaceFromCloud());
       _pushNotification(
         CrmNotificationLevel.success,
         'Синхронизация завершена',
@@ -3467,8 +3684,7 @@ $instructions
                             ),
                           ),
                           subtitle: Text(
-                            '${item.category} • ${item.durationHours.toStringAsFixed(1)} ч • '
-                            '${item.hasAnyPrice ? 'есть цены' : 'цены не заданы'}'
+                            '${item.category} • ${item.durationHours.toStringAsFixed(1)} ч'
                             '${item.botInstructions.trim().isNotEmpty ? ' • правила бота заданы' : ''}'
                             '${item.archived ? ' • в архиве' : ''}',
                           ),
@@ -3570,12 +3786,6 @@ $instructions
       text: item.durationHours.toStringAsFixed(1),
     );
     final botInstructions = TextEditingController(text: item.botInstructions);
-    final prices = {
-      for (final vehicleClass in VehicleClass.values)
-        vehicleClass: TextEditingController(
-          text: item.priceFor(vehicleClass).toStringAsFixed(0),
-        ),
-    };
     final selectedMaterials = {...item.materialIds};
     final saved = await showDialog<bool>(
       context: context,
@@ -3619,22 +3829,6 @@ $instructions
                           'Сохраняется отдельным разделом базы знаний и обновляется автоматически.',
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Цена по классу автомобиля'),
-                  ),
-                  for (final vehicleClass in VehicleClass.values)
-                    TextField(
-                      controller: prices[vehicleClass],
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: InputDecoration(
-                        labelText: vehicleClass.label,
-                        suffixText: '₽',
-                      ),
-                    ),
                   if (stockItems.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     const Align(
@@ -3693,10 +3887,6 @@ $instructions
                 item.durationHours = _num(duration.text);
                 item.botInstructions = botInstructions.text.trim();
                 item.materialIds = selectedMaterials.toList();
-                item.prices = {
-                  for (final vehicleClass in VehicleClass.values)
-                    vehicleClass.key: _num(prices[vehicleClass]!.text),
-                };
                 item.updatedAt = DateTime.now().toIso8601String();
                 Navigator.pop(dialogContext, true);
               },
@@ -3710,9 +3900,6 @@ $instructions
     category.dispose();
     duration.dispose();
     botInstructions.dispose();
-    for (final controller in prices.values) {
-      controller.dispose();
-    }
     if (saved == true && persist) {
       _migrateLegacyServicesToCatalog();
       await _saveServices();
@@ -3902,7 +4089,10 @@ $instructions
           ? ''
           : cloudKnowledge.first['content']?.toString().trim() ?? '';
       if (cloudKnowledgeText.isNotEmpty) knowledgeBase = cloudKnowledgeText;
-      await _syncServiceKnowledge(source: 'синхронизация услуг из облака');
+      await _syncServiceKnowledge(
+        source: 'синхронизация услуг из облака',
+        sync: false,
+      );
       final cloudKnowledgeVersions = objects('knowledgeVersions');
       if (cloud.containsKey('knowledgeVersions')) {
         knowledgeVersions
@@ -3911,8 +4101,8 @@ $instructions
       }
       await _saveServices();
       await _saveManualDeals();
-      await _saveMessageMeta();
-      await _saveAccountingCategories();
+      await _saveMessageMeta(sync: false);
+      await _saveAccountingCategories(sync: false);
       // _crmDataLoaded is intentionally still false during startup, so save
       // the restored cache explicitly without enabling early user writes.
       await prefs.setString(
@@ -3939,6 +4129,7 @@ $instructions
         'calendar_events_cache',
         jsonEncode(calendarEvents),
       );
+      await _recordIncomingAppointments(calendarEvents);
       await _saveWorkspaceData(sync: false);
       await _saveKnowledgeBase(
         source: 'Восстановление из облака',
@@ -3957,6 +4148,24 @@ $instructions
         error: error,
         name: 'crm.cloud',
       );
+    }
+  }
+
+  Future<void> _refreshWorkspaceFromCloud() async {
+    if (_workspaceRefreshInProgress ||
+        _workspaceSaveInProgress ||
+        !_crmDataLoaded ||
+        _session == null ||
+        pendingChangesSyncing ||
+        localChangeQueue.items.isNotEmpty) {
+      return;
+    }
+    _workspaceRefreshInProgress = true;
+    try {
+      await _restoreCloudWorkspaceIfAvailable();
+      if (mounted) setState(() {});
+    } finally {
+      _workspaceRefreshInProgress = false;
     }
   }
 
@@ -4135,7 +4344,9 @@ $instructions
         users: _serverUsers,
         loading: _authLoading,
         error: _authError,
-        initialUserId: prefs.getString('crm_current_user'),
+        initialUserId: preferencesLoaded
+            ? prefs.getString('crm_current_user')
+            : null,
         onLogin: _login,
         onRetry: () {
           setState(() {
@@ -4202,26 +4413,56 @@ $instructions
   );
 
   List<DashboardMobileDestination> _mobileDestinations() {
-    const primaryPages = [0, 1, 2, 3, 7];
-    return primaryPages
-        .where((index) => _canView(_pagePermissionArea(index)))
+    const primary = [
+      (0, 'Сегодня', Icons.today_outlined),
+      (1, 'Клиенты', Icons.people_outline),
+      (3, 'Записи', Icons.calendar_month_outlined),
+      (7, 'Сообщения', Icons.forum_outlined),
+    ];
+    final destinations = primary
+        .where((item) => _canView(_pagePermissionArea(item.$1)))
         .map(
-          (index) => DashboardMobileDestination(
-            pageIndex: index,
-            label: crmPages[index].title,
-            icon: crmPageIcons[index],
+          (item) => DashboardMobileDestination(
+            pageIndex: item.$1,
+            label: item.$2,
+            icon: item.$3,
           ),
         )
         .toList();
+    if (destinations.length >= 2) {
+      destinations.add(
+        const DashboardMobileDestination(
+          pageIndex: -1,
+          label: 'Ещё',
+          icon: Icons.more_horiz,
+          isMore: true,
+        ),
+      );
+    }
+    return destinations;
   }
 
   void _selectPage(int index) {
     setState(() => selected = index);
     if (index == 4) _loadAccounting();
     if (index == 2 || index == 0) _loadDeals();
+    if (index == 3 && _usesGoogleCalendar) _loadCalendarEvents();
+    if (index == 7) unawaited(_refreshMessageSources());
     if (usesCompactNavigation(MediaQuery.sizeOf(context).width)) {
       unawaited(Navigator.of(context).maybePop());
     }
+  }
+
+  Future<void> _refreshMessageSources() async {
+    final requests = <Future<void>>[
+      if (messengerConnected['vk'] == true) _loadVkConversations(silent: true),
+      if (messengerConnected['telegram'] == true)
+        _loadTelegramUpdates(silent: true),
+      if (messengerConnected['instagram'] == true)
+        _loadInstagramConversations(silent: true),
+      if (avitoAccounts.isNotEmpty) _connectAvito(silent: true),
+    ];
+    await Future.wait(requests);
   }
 
   Widget _pageBody() {
@@ -4677,6 +4918,7 @@ $instructions
         'calendar_events_cache',
         jsonEncode(calendarEvents),
       );
+      await _recordIncomingAppointments(calendarEvents);
     } catch (_) {
       if (mounted) {
         setState(
@@ -5108,14 +5350,65 @@ $instructions
     );
     final note = TextEditingController(text: private['note']?.toString() ?? '');
     String status = private['status']?.toString() ?? 'Записан';
-    VehicleClass vehicleClass = VehicleClass.fromKey(
-      private['vehicleClass']?.toString() ?? '',
-    );
     final originalStatus = status;
+    final activePerformers = userProfiles
+        .where((profile) => profile.active && profile.name.trim().isNotEmpty)
+        .toList(growable: false);
+    Future<void> selectPerformers(StateSetter refresh) async {
+      final chosen = performer.text
+          .split(',')
+          .map((name) => name.trim())
+          .where((name) => name.isNotEmpty)
+          .toSet();
+      final saved = await showDialog<Set<String>>(
+        context: context,
+        builder: (pickerContext) => StatefulBuilder(
+          builder: (pickerContext, setPickerState) => AlertDialog(
+            title: const Text('Исполнители'),
+            content: SizedBox(
+              width: 360,
+              child: ListView(
+                shrinkWrap: true,
+                children: activePerformers
+                    .map(
+                      (profile) => CheckboxListTile(
+                        value: chosen.contains(profile.name),
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(profile.name),
+                        subtitle: Text(profile.role),
+                        onChanged: (selected) => setPickerState(() {
+                          if (selected == true) {
+                            chosen.add(profile.name);
+                          } else {
+                            chosen.remove(profile.name);
+                          }
+                        }),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(pickerContext),
+                child: const Text('Отмена'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(pickerContext, chosen),
+                child: const Text('Выбрать'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (saved != null) {
+        refresh(() => performer.text = saved.join(', '));
+      }
+    }
+
     final rows = <Map<String, dynamic>>[
       {'type': 'Услуга', 'name': service, 'price': cost},
     ];
-    final manuallyPricedRows = <TextEditingController>{};
     void applyServiceDurationTemplates() {
       final hours = calculateServiceTemplateDuration(
         rows
@@ -5242,44 +5535,20 @@ $instructions
                     decoration: const InputDecoration(labelText: 'Автомобиль'),
                   ),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<VehicleClass>(
-                    initialValue: vehicleClass,
-                    decoration: const InputDecoration(
-                      labelText: 'Класс автомобиля',
-                    ),
-                    items: VehicleClass.values
-                        .map(
-                          (value) => DropdownMenuItem(
-                            value: value,
-                            child: Text(value.label),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) => setDialog(() {
-                      vehicleClass = value ?? vehicleClass;
-                      for (final row in rows) {
-                        if (row['type'] != 'Услуга') continue;
-                        final catalog = _serviceByName(
-                          (row['name'] as TextEditingController).text,
-                        );
-                        if (catalog != null &&
-                            !manuallyPricedRows.contains(
-                              row['price'] as TextEditingController,
-                            )) {
-                          (row['price'] as TextEditingController).text = catalog
-                              .priceFor(vehicleClass)
-                              .toStringAsFixed(0);
-                        }
-                      }
-                    }),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: performer,
-                    decoration: const InputDecoration(
-                      labelText: 'Исполнитель (можно несколько)',
-                      helperText:
-                          'Перечислите через запятую для проверки занятости',
+                  InkWell(
+                    onTap: activePerformers.isEmpty
+                        ? null
+                        : () => selectPerformers(setDialog),
+                    borderRadius: BorderRadius.circular(8),
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Исполнители',
+                        helperText: 'Выберите активные аккаунты CRM',
+                        suffixIcon: Icon(Icons.expand_more),
+                      ),
+                      child: Text(
+                        performer.text.isEmpty ? 'Не выбраны' : performer.text,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -5389,13 +5658,6 @@ $instructions
                                                 as TextEditingController)
                                             .text =
                                         catalog?.name ?? '';
-                                    if (catalog != null) {
-                                      (entry.value['price']
-                                              as TextEditingController)
-                                          .text = catalog
-                                          .priceFor(vehicleClass)
-                                          .toStringAsFixed(0);
-                                    }
                                     applyServiceDurationTemplates();
                                   }),
                                 )
@@ -5448,11 +5710,7 @@ $instructions
                                 vertical: 8,
                               ),
                             ),
-                            onChanged: (_) => setDialog(() {
-                              manuallyPricedRows.add(
-                                entry.value['price'] as TextEditingController,
-                              );
-                            }),
+                            onChanged: (_) => setDialog(() {}),
                           );
                           final addButton = IconButton(
                             icon: const Icon(
@@ -5523,7 +5781,7 @@ $instructions
         ),
       ),
     );
-    if (ok != true || calendarAccessToken == null) return;
+    if (ok != true) return;
     final invalidService = rows.any(
       (row) =>
           row['type'] == 'Услуга' &&
@@ -5550,11 +5808,7 @@ $instructions
     if (serviceWithoutPrice) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Для выбранного класса нет цены: заполните прайс в справочнике или укажите ручную цену',
-            ),
-          ),
+          const SnackBar(content: Text('Укажите цену услуги вручную')),
         );
       }
       return;
@@ -5642,7 +5896,12 @@ $instructions
           'source': source.text.trim(),
           'car': car.text.trim(),
           'vehicleId': appointmentClient?.vehicleIdFor(car.text) ?? '',
-          'vehicleClass': vehicleClass.key,
+          'createdBy': private['createdBy']?.toString().isNotEmpty == true
+              ? private['createdBy'].toString()
+              : currentUserId,
+          'createdAt': private['createdAt']?.toString().isNotEmpty == true
+              ? private['createdAt'].toString()
+              : DateTime.now().toIso8601String(),
           'performer': performer.text.trim(),
           'service': servicesText.isEmpty ? service.text.trim() : servicesText,
           'cost': totalCost > 0
@@ -5650,7 +5909,6 @@ $instructions
               : cost.text.trim(),
           'status': status,
           'bookingType': rows.map((r) => r['type']).join(', '),
-          'manualPrice': manuallyPricedRows.isEmpty ? 'Нет' : 'Да',
           'phone': phone.text.trim(),
           'note': note.text.trim(),
           'duration': duration.text.trim().isEmpty ? '1' : duration.text.trim(),
@@ -5667,6 +5925,46 @@ $instructions
       },
     });
     final id = event?['id']?.toString();
+    if (!_usesGoogleCalendar) {
+      final saved = Map<String, dynamic>.from(jsonDecode(body) as Map);
+      final savedId =
+          id ?? 'appointment-${DateTime.now().microsecondsSinceEpoch}';
+      saved['id'] = savedId;
+      saved['updated'] = DateTime.now().toIso8601String();
+      if (mounted) {
+        setState(() {
+          calendarViewDate = DateTime(when.year, when.month);
+          selectedCalendarDay = DateTime(when.year, when.month, when.day);
+          final index = calendarEvents.indexWhere(
+            (item) => item['id']?.toString() == savedId,
+          );
+          if (index >= 0) {
+            calendarEvents[index] = saved;
+          } else {
+            calendarEvents.add(saved);
+          }
+          calendarStatus = 'Запись сохранена в общей CRM.';
+        });
+      }
+      await prefs.setString(
+        'calendar_events_cache',
+        jsonEncode(calendarEvents),
+      );
+      await _recordIncomingAppointments(calendarEvents);
+      _audit(id == null ? 'Создана' : 'Изменена', 'Запись', name.text.trim());
+      _enqueueCloudSnapshot(
+        'Запись',
+        '${id == null ? 'Создана' : 'Изменена'} запись ${name.text.trim()}',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Запись сохранена и будет синхронизирована'),
+          ),
+        );
+      }
+      return;
+    }
     final base =
         'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events';
     final uri = Uri.parse(
@@ -5804,7 +6102,30 @@ $instructions
   }) async {
     if (!_canEdit('calendar')) return;
     final id = event['id']?.toString();
-    if (id == null || calendarAccessToken == null) return;
+    if (id == null) return;
+    if (!_usesGoogleCalendar) {
+      calendarEvents.removeWhere((item) => item['id']?.toString() == id);
+      archivedCalendarEvents.add({
+        ...event,
+        'archivedStatus': archivedStatus,
+        'archivedAt': DateTime.now().toIso8601String(),
+        'cancellationReason': reason,
+      });
+      await prefs.setString(
+        'calendar_events_cache',
+        jsonEncode(calendarEvents),
+      );
+      _audit(
+        archivedStatus == 'Выполнен' ? 'Завершена' : 'Отменена',
+        'Запись',
+        '${event['summary'] ?? 'Запись'}${reason.isEmpty ? '' : ': $reason'}',
+      );
+      _enqueueCloudSnapshot(
+        'Запись',
+        '$archivedStatus: ${event['summary'] ?? 'Запись'}',
+      );
+      return;
+    }
     final base =
         'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events';
     var res = await _apiClient.delete(
@@ -5914,17 +6235,7 @@ $instructions
   }
 
   Widget _appointments() {
-    if (calendarConnected) return _calendarWorkspace();
-    return CalendarConnectionPanel(
-      status: calendarStatus,
-      loading: calendarLoading,
-      canConfigure: canManageIntegrations,
-      hasClientSecret: calendarClientSecret.isNotEmpty,
-      surfaceColor: _surfaceColor,
-      borderColor: _cardBorderColor,
-      onConnect: () => unawaited(_connectCalendar()),
-      onConfigureSecret: () => unawaited(_configureCalendarClientSecret()),
-    );
+    return _calendarWorkspace();
   }
 
   Future<void> _calendarSettings() async {
@@ -6074,7 +6385,7 @@ $instructions
   Widget _calendarWorkspace() {
     final selectedEvents = _eventsFor(selectedCalendarDay);
     return CalendarWorkspace(
-      calendarName: calendarName,
+      calendarName: _usesGoogleCalendar ? calendarName : 'Общие записи CRM',
       viewMode: calendarViewMode,
       viewDate: calendarViewDate,
       selectedDay: selectedCalendarDay,
@@ -6178,6 +6489,7 @@ $instructions
     final events = _eventsFor(day);
     final picked = isSameCalendarDay(day, selectedCalendarDay);
     final today = isSameCalendarDay(day, DateTime.now());
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return DragTarget<Map<String, dynamic>>(
       onAcceptWithDetails: (details) => _moveEventToDay(details.data, day),
       builder: (context, candidate, rejected) => InkWell(
@@ -6185,7 +6497,7 @@ $instructions
         borderRadius: BorderRadius.circular(8),
         child: Container(
           margin: const EdgeInsets.all(2),
-          padding: const EdgeInsets.all(6),
+          padding: EdgeInsets.all(compact ? 4 : 6),
           decoration: BoxDecoration(
             color: picked ? const Color(0xFFF28C28) : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
@@ -6216,12 +6528,21 @@ $instructions
                   ),
                 ),
               ),
-              for (final e in events.take(1))
-                InkWell(
-                  onTap: () {
-                    _showAppointmentActions(e);
-                  },
-                  child: GestureDetector(
+              if (compact && events.isNotEmpty)
+                Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF28C28),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                )
+              else
+                for (final e in events.take(1))
+                  InkWell(
                     onTap: () => _showAppointmentActions(e),
                     child: Container(
                       width: double.infinity,
@@ -6246,8 +6567,7 @@ $instructions
                       ),
                     ),
                   ),
-                ),
-              if (events.length > 2)
+              if (!compact && events.length > 2)
                 Text(
                   '+ ещё ${events.length - 2}',
                   style: TextStyle(fontSize: 10, color: _mutedTextColor),
@@ -7620,7 +7940,7 @@ $instructions
     Map<String, dynamic> call,
     AiActionRecommendation action,
   ) async {
-    if (!_canEdit('admin') || dashboardNotes.length >= 8) return false;
+    if (!_canEdit('dashboard') || dashboardNotes.length >= 8) return false;
     final phone = call['buyerPhone']?.toString() ?? '';
     final text = [
       if (phone.isNotEmpty) 'Звонок Avito • $phone',
@@ -8005,16 +8325,27 @@ $instructions
 
   Future<void> _loadTelegramUpdates({bool silent = false}) async {
     final token = _messengerToken('telegram');
-    if (token.isEmpty) return;
+    if (token.isEmpty && _session == null) return;
     if (mounted) setState(() => telegramLoading = true);
     try {
       final offset = prefs.getInt('telegram_update_offset');
       final query = <String, String>{'timeout': '1', 'limit': '100'};
       if (offset != null) query['offset'] = offset.toString();
-      final response = await _apiClient.get(
-        Uri.https('api.telegram.org', '/bot$token/getUpdates', query),
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = token.isEmpty
+          ? await _proxyIntegration('message.telegram', {
+              'method': 'getUpdates',
+              'body': query,
+            })
+          : jsonDecode(
+                  (await _apiClient.get(
+                    Uri.https(
+                      'api.telegram.org',
+                      '/bot$token/getUpdates',
+                      query,
+                    ),
+                  )).body,
+                )
+                as Map<String, dynamic>;
       if (data['ok'] != true) throw Exception('Telegram не вернул обновления');
       final updates = (data['result'] as List? ?? const []).whereType<Map>();
       for (final raw in updates) {
@@ -8049,8 +8380,11 @@ $instructions
         target['messages'] = messages.take(100).toList();
         if (existing == null) telegramChats.add(target);
       }
+      messengerStatus['telegram'] =
+          'Обновлено: ${telegramChats.length} диалогов';
       if (mounted && !silent) setState(() {});
     } catch (e) {
+      messengerStatus['telegram'] = _integrationErrorText(e);
       if (mounted && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
@@ -8173,8 +8507,11 @@ $instructions
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
+      messengerStatus['instagram'] =
+          'Обновлено: ${instagramConversations.length} диалогов';
       if (mounted && !silent) setState(() {});
     } catch (e) {
+      messengerStatus['instagram'] = _integrationErrorText(e);
       if (mounted && requestId == _instagramRequestId && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
@@ -8294,17 +8631,24 @@ $instructions
 
   Future<void> _loadVkConversations({bool silent = false}) async {
     final token = _messengerToken('vk');
-    if (token.isEmpty) return;
+    if (token.isEmpty && _session == null) return;
     if (mounted) setState(() => vkLoading = true);
     try {
-      final response = await _apiClient.get(
-        Uri.https(
-          'api.vk.com',
-          '/method/messages.getConversations',
-          _vkParams({'count': '100', 'extended': '1'}),
-        ),
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = token.isEmpty
+          ? await _proxyIntegration('message.vk', {
+              'method': 'messages.getConversations',
+              'body': {'count': '100', 'extended': '1'},
+            })
+          : jsonDecode(
+                  (await _apiClient.get(
+                    Uri.https(
+                      'api.vk.com',
+                      '/method/messages.getConversations',
+                      _vkParams({'count': '100', 'extended': '1'}),
+                    ),
+                  )).body,
+                )
+                as Map<String, dynamic>;
       if (data['error'] != null) {
         final error = data['error'] as Map;
         throw Exception(
@@ -8318,6 +8662,7 @@ $instructions
                 .map((e) => Map<String, dynamic>.from(e))
                 .toList()
           : [];
+      messengerStatus['vk'] = 'Обновлено: ${vkConversations.length} диалогов';
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -8326,6 +8671,7 @@ $instructions
         );
       }
     } catch (e) {
+      messengerStatus['vk'] = _integrationErrorText(e);
       if (mounted && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
@@ -8334,6 +8680,12 @@ $instructions
     } finally {
       if (mounted) setState(() => vkLoading = false);
     }
+  }
+
+  String _integrationErrorText(Object error) {
+    final message = error.toString().replaceFirst('Exception: ', '').trim();
+    if (message.isEmpty) return 'Не удалось обновить данные';
+    return message.length > 90 ? '${message.substring(0, 90)}…' : message;
   }
 
   Future<void> _openVkConversation(Map<String, dynamic> conversation) async {
@@ -8492,7 +8844,7 @@ $instructions
     padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
       color: _surfaceColor,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(8),
       border: Border.all(color: _cardBorderColor),
     ),
     child: Column(
@@ -8931,172 +9283,214 @@ $instructions
       canRetry: _canEdit('messages'),
       onRetry: () => unawaited(_retryPendingMessages()),
       onDiagnostics: () => unawaited(_showIntegrationDiagnostics()),
+      onRefresh: _refreshMessageSources,
     );
   }
 
-  Widget _unifiedMessagesBlock() => Container(
-    width: 980,
-    height: 470,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: _surfaceColor,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: _cardBorderColor),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Общий чат',
-          style: TextStyle(
-            color: _mainTextColor,
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-          ),
+  Widget _unifiedMessagesBlock() => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact = constraints.maxWidth < 620;
+      final hasDialogs =
+          instagramConversations.isNotEmpty ||
+          telegramChats.isNotEmpty ||
+          avitoChats.isNotEmpty ||
+          vkConversations.isNotEmpty;
+      return Container(
+        width: double.infinity,
+        height: compact ? (hasDialogs ? 440 : 260) : 470,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _surfaceColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _cardBorderColor),
         ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: messagesSearchController,
-          onChanged: (v) {
-            messagesSearchDebounce?.cancel();
-            messagesSearchDebounce = Timer(AppConstants.searchDebounce, () {
-              if (mounted) setState(() => messagesSearch = v);
-            });
-          },
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.search),
-            labelText: 'Поиск диалогов',
-          ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: Row(
-            children: [
-              SizedBox(
-                width: 330,
-                child: UnifiedInboxList(
-                  dialogs: [
-                    ...instagramConversations
-                        .where(
-                          (c) => _instagramConversationTitle(c)
-                              .toLowerCase()
-                              .contains(messagesSearch.toLowerCase()),
-                        )
-                        .map(
-                          (c) => UnifiedDialog(
-                            platform: 'Instagram',
-                            id:
-                                c['id']?.toString() ??
-                                _instagramConversationTitle(c),
-                            name: _instagramConversationTitle(c),
-                            preview: 'Direct Instagram',
-                            unread: false,
-                            onTap: () => _openInstagramConversation(c),
-                            onLongPress: _canEdit('messages')
-                                ? () => _editMessageMeta('Instagram:${c['id']}')
-                                : null,
-                            assignee: messageAssignees['Instagram:${c['id']}'],
-                            tags:
-                                messageTags['Instagram:${c['id']}'] ?? const [],
-                          ),
-                        ),
-                    ...telegramChats
-                        .where(
-                          (c) => _telegramTitle(c).toLowerCase().contains(
-                            messagesSearch.toLowerCase(),
-                          ),
-                        )
-                        .map(
-                          (c) => UnifiedDialog(
-                            platform: 'Telegram',
-                            id: c['id']?.toString() ?? _telegramTitle(c),
-                            name: _telegramTitle(c),
-                            preview: _telegramPreview(c),
-                            unread: false,
-                            onTap: () => _openTelegramChat(c),
-                            onLongPress: _canEdit('messages')
-                                ? () => _editMessageMeta('Telegram:${c['id']}')
-                                : null,
-                            assignee: messageAssignees['Telegram:${c['id']}'],
-                            tags:
-                                messageTags['Telegram:${c['id']}'] ?? const [],
-                          ),
-                        ),
-                    ...avitoChats
-                        .where(
-                          (c) => _avitoChatTitle(c).toLowerCase().contains(
-                            messagesSearch.toLowerCase(),
-                          ),
-                        )
-                        .map(
-                          (c) => UnifiedDialog(
-                            platform: 'Avito',
-                            id: c['id']?.toString() ?? _avitoChatTitle(c),
-                            name: _avitoChatTitle(c),
-                            preview: _avitoText(
-                              c['last_message'] is Map
-                                  ? Map<String, dynamic>.from(c['last_message'])
-                                  : const {},
-                            ),
-                            unread: !readMessageDialogs.contains(
-                              'Avito:${c['id']}',
-                            ),
-                            onTap: () => _openAvitoChat(c),
-                            onLongPress: _canEdit('messages')
-                                ? () => _editMessageMeta('Avito:${c['id']}')
-                                : null,
-                            assignee: messageAssignees['Avito:${c['id']}'],
-                            tags: messageTags['Avito:${c['id']}'] ?? const [],
-                          ),
-                        ),
-                    ...vkConversations
-                        .where(
-                          (c) => _vkConversationTitle(c).toLowerCase().contains(
-                            messagesSearch.toLowerCase(),
-                          ),
-                        )
-                        .map((c) {
-                          final id =
-                              c['conversation']?['peer']?['id']?.toString() ??
-                              _vkConversationTitle(c);
-                          return UnifiedDialog(
-                            platform: 'ВКонтакте',
-                            id: id,
-                            name: _vkConversationTitle(c),
-                            preview: _vkText(
-                              c['last_message'] is Map
-                                  ? Map<String, dynamic>.from(c['last_message'])
-                                  : const {},
-                            ),
-                            unread: !readMessageDialogs.contains('VK:$id'),
-                            onTap: () => _openVkConversation(c),
-                            onLongPress: _canEdit('messages')
-                                ? () => _editMessageMeta('VK:$id')
-                                : null,
-                            assignee: messageAssignees['VK:$id'],
-                            tags: messageTags['VK:$id'] ?? const [],
-                          );
-                        }),
-                  ],
-                  mainTextColor: _mainTextColor,
-                  mutedTextColor: _mutedTextColor,
-                  cardBorderColor: _cardBorderColor,
-                ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Общий чат',
+              style: TextStyle(
+                color: _mainTextColor,
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
               ),
-              VerticalDivider(width: 24, color: _cardBorderColor),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    'Выберите диалог слева',
-                    style: TextStyle(color: _mutedTextColor),
-                  ),
-                ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: messagesSearchController,
+              onChanged: (v) {
+                messagesSearchDebounce?.cancel();
+                messagesSearchDebounce = Timer(AppConstants.searchDebounce, () {
+                  if (mounted) setState(() => messagesSearch = v);
+                });
+              },
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                labelText: 'Поиск диалогов',
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 620;
+                  return Row(
+                    children: [
+                      SizedBox(
+                        width: compact ? constraints.maxWidth : 330,
+                        child: UnifiedInboxList(
+                          dialogs: [
+                            ...instagramConversations
+                                .where(
+                                  (c) => _instagramConversationTitle(c)
+                                      .toLowerCase()
+                                      .contains(messagesSearch.toLowerCase()),
+                                )
+                                .map(
+                                  (c) => UnifiedDialog(
+                                    platform: 'Instagram',
+                                    id:
+                                        c['id']?.toString() ??
+                                        _instagramConversationTitle(c),
+                                    name: _instagramConversationTitle(c),
+                                    preview: 'Direct Instagram',
+                                    unread: false,
+                                    onTap: () => _openInstagramConversation(c),
+                                    onLongPress: _canEdit('messages')
+                                        ? () => _editMessageMeta(
+                                            'Instagram:${c['id']}',
+                                          )
+                                        : null,
+                                    assignee:
+                                        messageAssignees['Instagram:${c['id']}'],
+                                    tags:
+                                        messageTags['Instagram:${c['id']}'] ??
+                                        const [],
+                                  ),
+                                ),
+                            ...telegramChats
+                                .where(
+                                  (c) => _telegramTitle(c)
+                                      .toLowerCase()
+                                      .contains(messagesSearch.toLowerCase()),
+                                )
+                                .map(
+                                  (c) => UnifiedDialog(
+                                    platform: 'Telegram',
+                                    id:
+                                        c['id']?.toString() ??
+                                        _telegramTitle(c),
+                                    name: _telegramTitle(c),
+                                    preview: _telegramPreview(c),
+                                    unread: false,
+                                    onTap: () => _openTelegramChat(c),
+                                    onLongPress: _canEdit('messages')
+                                        ? () => _editMessageMeta(
+                                            'Telegram:${c['id']}',
+                                          )
+                                        : null,
+                                    assignee:
+                                        messageAssignees['Telegram:${c['id']}'],
+                                    tags:
+                                        messageTags['Telegram:${c['id']}'] ??
+                                        const [],
+                                  ),
+                                ),
+                            ...avitoChats
+                                .where(
+                                  (c) => _avitoChatTitle(c)
+                                      .toLowerCase()
+                                      .contains(messagesSearch.toLowerCase()),
+                                )
+                                .map(
+                                  (c) => UnifiedDialog(
+                                    platform: 'Avito',
+                                    id:
+                                        c['id']?.toString() ??
+                                        _avitoChatTitle(c),
+                                    name: _avitoChatTitle(c),
+                                    preview: _avitoText(
+                                      c['last_message'] is Map
+                                          ? Map<String, dynamic>.from(
+                                              c['last_message'],
+                                            )
+                                          : const {},
+                                    ),
+                                    unread: !readMessageDialogs.contains(
+                                      'Avito:${c['id']}',
+                                    ),
+                                    onTap: () => _openAvitoChat(c),
+                                    onLongPress: _canEdit('messages')
+                                        ? () => _editMessageMeta(
+                                            'Avito:${c['id']}',
+                                          )
+                                        : null,
+                                    assignee:
+                                        messageAssignees['Avito:${c['id']}'],
+                                    tags:
+                                        messageTags['Avito:${c['id']}'] ??
+                                        const [],
+                                  ),
+                                ),
+                            ...vkConversations
+                                .where(
+                                  (c) => _vkConversationTitle(c)
+                                      .toLowerCase()
+                                      .contains(messagesSearch.toLowerCase()),
+                                )
+                                .map((c) {
+                                  final id =
+                                      c['conversation']?['peer']?['id']
+                                          ?.toString() ??
+                                      _vkConversationTitle(c);
+                                  return UnifiedDialog(
+                                    platform: 'ВКонтакте',
+                                    id: id,
+                                    name: _vkConversationTitle(c),
+                                    preview: _vkText(
+                                      c['last_message'] is Map
+                                          ? Map<String, dynamic>.from(
+                                              c['last_message'],
+                                            )
+                                          : const {},
+                                    ),
+                                    unread: !readMessageDialogs.contains(
+                                      'VK:$id',
+                                    ),
+                                    onTap: () => _openVkConversation(c),
+                                    onLongPress: _canEdit('messages')
+                                        ? () => _editMessageMeta('VK:$id')
+                                        : null,
+                                    assignee: messageAssignees['VK:$id'],
+                                    tags: messageTags['VK:$id'] ?? const [],
+                                  );
+                                }),
+                          ],
+                          mainTextColor: _mainTextColor,
+                          mutedTextColor: _mutedTextColor,
+                          cardBorderColor: _cardBorderColor,
+                        ),
+                      ),
+                      if (!compact) ...[
+                        VerticalDivider(width: 24, color: _cardBorderColor),
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              'Выберите диалог слева',
+                              style: TextStyle(color: _mutedTextColor),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ),
-      ],
-    ),
+      );
+    },
   );
 
   Future<void> _editMessageMeta(String id) async {
@@ -9273,7 +9667,7 @@ $instructions
   }
 
   Widget _avitoWorkspace() => Container(
-    width: 980,
+    constraints: const BoxConstraints(maxWidth: 980),
     height: 540,
     padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
@@ -9284,17 +9678,28 @@ $instructions
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            _avitoTab('Чаты', Icons.forum_outlined),
-            const SizedBox(width: 8),
-            _avitoTab('Звонки', Icons.call_outlined),
-            const Spacer(),
-            Text(
-              'Данные Avito за последние 30 дней',
-              style: TextStyle(color: _mutedTextColor, fontSize: 12),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final tabs = [
+              _avitoTab('Чаты', Icons.forum_outlined),
+              _avitoTab('Звонки', Icons.call_outlined),
+            ];
+            if (constraints.maxWidth < 620) {
+              return Wrap(spacing: 8, runSpacing: 8, children: tabs);
+            }
+            return Row(
+              children: [
+                tabs.first,
+                const SizedBox(width: 8),
+                tabs.last,
+                const Spacer(),
+                Text(
+                  'Данные Avito за последние 30 дней',
+                  style: TextStyle(color: _mutedTextColor, fontSize: 12),
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 16),
         Expanded(
@@ -9341,73 +9746,84 @@ $instructions
     );
   }
 
-  Widget _avitoChatsView() => Row(
-    children: [
-      SizedBox(
-        width: 310,
-        child: avitoChats.isEmpty
-            ? Center(
-                child: Text(
-                  'Чатов пока нет',
-                  style: TextStyle(color: _mutedTextColor),
-                ),
-              )
-            : ListView.separated(
-                itemCount: avitoChats.length,
-                separatorBuilder: (_, _) =>
-                    Divider(color: _cardBorderColor, height: 1),
-                itemBuilder: (_, i) {
-                  final chat = avitoChats[i];
-                  final selectedChat =
-                      selectedAvitoChat?['id']?.toString() ==
-                      chat['id']?.toString();
-                  final last = chat['last_message'] is Map
-                      ? Map<String, dynamic>.from(chat['last_message'])
-                      : <String, dynamic>{};
-                  return InkWell(
-                    onTap: () => _openAvitoChat(chat),
-                    child: Container(
-                      color: selectedChat
-                          ? const Color(
-                              0xFFF28C28,
-                            ).withValues(alpha: widget.darkMode ? .18 : .10)
-                          : Colors.transparent,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _avitoChatTitle(chat),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: _mainTextColor,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _avitoText(last),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: _mutedTextColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
+  Widget _avitoChatsView() => LayoutBuilder(
+    builder: (context, constraints) {
+      final chatList = avitoChats.isEmpty
+          ? Center(
+              child: Text(
+                'Чатов пока нет',
+                style: TextStyle(color: _mutedTextColor),
               ),
-      ),
-      VerticalDivider(color: _cardBorderColor, width: 26),
-      Expanded(child: _avitoChatView()),
-    ],
+            )
+          : ListView.separated(
+              itemCount: avitoChats.length,
+              separatorBuilder: (_, _) =>
+                  Divider(color: _cardBorderColor, height: 1),
+              itemBuilder: (_, i) {
+                final chat = avitoChats[i];
+                final selectedChat =
+                    selectedAvitoChat?['id']?.toString() ==
+                    chat['id']?.toString();
+                final last = chat['last_message'] is Map
+                    ? Map<String, dynamic>.from(chat['last_message'])
+                    : <String, dynamic>{};
+                return InkWell(
+                  onTap: () => _openAvitoChat(chat),
+                  child: Container(
+                    color: selectedChat
+                        ? const Color(
+                            0xFFF28C28,
+                          ).withValues(alpha: widget.darkMode ? .18 : .10)
+                        : Colors.transparent,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _avitoChatTitle(chat),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _mainTextColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _avitoText(last),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _mutedTextColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+      if (constraints.maxWidth < 680) {
+        return Column(
+          children: [
+            SizedBox(height: 120, child: chatList),
+            Divider(height: 20, color: _cardBorderColor),
+            Expanded(child: _avitoChatView()),
+          ],
+        );
+      }
+      return Row(
+        children: [
+          SizedBox(width: 310, child: chatList),
+          VerticalDivider(color: _cardBorderColor, width: 26),
+          Expanded(child: _avitoChatView()),
+        ],
+      );
+    },
   );
 
   Widget _avitoChatView() {
@@ -10051,6 +10467,95 @@ $instructions
     return result;
   }
 
+  CrmSyncStatus get _syncStatus => CrmSyncStatus(
+    serverConnected: _session != null && syncEndpoint.isNotEmpty,
+    sheetsOffline: sheetsOfflineMode,
+    syncing: pendingChangesSyncing || loading,
+    pendingChanges: localChangeQueue.items.length,
+    lastSuccessfulSync: lastPendingChangesSync ?? lastSheetsSync,
+    error: pendingChangesSyncError ?? sheetError,
+  );
+
+  List<IntegrationHealth> get _integrationHealth => [
+    IntegrationHealth(
+      name: 'CRM-сервер',
+      state: _session != null && syncEndpoint.isNotEmpty
+          ? CrmHealthState.connected
+          : CrmHealthState.notConfigured,
+      detail: _session == null ? 'Требуется вход по PIN' : 'Сессия активна',
+    ),
+    IntegrationHealth(
+      name: 'Google Sheets',
+      state: sheetsOfflineMode
+          ? CrmHealthState.offline
+          : currentSheetId.isEmpty && !_hasProtectedSheetAccess
+          ? CrmHealthState.notConfigured
+          : loading
+          ? CrmHealthState.pending
+          : CrmHealthState.connected,
+      detail: sheetsOfflineMode
+          ? (sheetError ?? 'Показан сохранённый кэш')
+          : 'Источники: ${_dataSource('deals', SheetsSchema.dealsSheet)}, ${_dataSource('accounting', SheetsSchema.accountingSheet)}',
+    ),
+    IntegrationHealth(
+      name: 'Google Календарь',
+      state: calendarLoading
+          ? CrmHealthState.pending
+          : calendarConnected
+          ? CrmHealthState.connected
+          : CrmHealthState.notConfigured,
+      detail: calendarStatus ?? 'Не подключён',
+    ),
+    IntegrationHealth(
+      name: 'Avito',
+      state: avitoLoading
+          ? CrmHealthState.pending
+          : avitoConnected
+          ? CrmHealthState.connected
+          : avitoAccounts.isEmpty
+          ? CrmHealthState.notConfigured
+          : CrmHealthState.error,
+      detail: avitoStatus,
+    ),
+    for (final channel in const ['telegram', 'vk', 'instagram'])
+      IntegrationHealth(
+        name: switch (channel) {
+          'telegram' => 'Telegram',
+          'vk' => 'VK',
+          _ => 'Instagram',
+        },
+        state: messengerConnected[channel] == true
+            ? CrmHealthState.connected
+            : CrmHealthState.notConfigured,
+        detail: messengerStatus[channel] ?? 'Не подключён',
+      ),
+    IntegrationHealth(
+      name: 'AI',
+      state: aiSettings.enabled
+          ? CrmHealthState.connected
+          : CrmHealthState.notConfigured,
+      detail: aiSettings.enabled ? 'Настроен владельцем' : 'Не подключён',
+    ),
+  ];
+
+  Future<void> _refreshEverything() async {
+    if (_session == null) return;
+    await Future.wait([_loadDeals(), _loadAccounting()]);
+    await _refreshWorkspaceFromCloud();
+    if (calendarConnected) await _loadCalendarEvents();
+    if (avitoAccounts.isNotEmpty) await _connectAvito(silent: true);
+    if (messengerConnected['vk'] == true) {
+      await _loadVkConversations(silent: true);
+    }
+    if (messengerConnected['telegram'] == true) {
+      await _loadTelegramUpdates(silent: true);
+    }
+    if (messengerConnected['instagram'] == true) {
+      await _loadInstagramConversations(silent: true);
+    }
+    await _syncPendingChanges();
+  }
+
   Widget _settings() => SettingsPage(
     currentUserId: currentUserId,
     userProfiles: userProfiles,
@@ -10107,6 +10612,9 @@ $instructions
     pendingChangesSyncing: pendingChangesSyncing,
     pendingChangesSyncError: pendingChangesSyncError,
     lastPendingChangesSync: lastPendingChangesSync,
+    syncStatus: _syncStatus,
+    integrationHealth: _integrationHealth,
+    onRefreshEverything: _refreshEverything,
     onSyncPendingChanges: _syncPendingChanges,
     onExportPendingChanges: _exportPendingChanges,
     auditEntries: auditEntries,
@@ -10577,8 +11085,8 @@ $instructions
               spacing: 12,
               runSpacing: 12,
               children: [
-                SizedBox(
-                  width: 360,
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
                   child: TextField(
                     controller: search,
                     onChanged: (_) {
@@ -10592,8 +11100,7 @@ $instructions
                     },
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
-                      labelText:
-                          'Поиск по имени, телефону, автомобилю или источнику',
+                      labelText: 'Поиск клиентов',
                     ),
                   ),
                 ),
@@ -10688,48 +11195,58 @@ $instructions
                           final ok = await showDialog<bool>(
                             context: context,
                             builder: (d) => AlertDialog(
+                              insetPadding: const EdgeInsets.all(16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                               title: const Text('Новый клиент'),
-                              content: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  TextField(
-                                    controller: name,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Имя',
-                                    ),
+                              content: SizedBox(
+                                width: 520,
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      TextField(
+                                        controller: name,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Имя',
+                                        ),
+                                      ),
+                                      TextField(
+                                        controller: phone,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Телефон',
+                                        ),
+                                      ),
+                                      TextField(
+                                        controller: car,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Автомобиль',
+                                        ),
+                                      ),
+                                      TextField(
+                                        controller: responsible,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Ответственный',
+                                        ),
+                                      ),
+                                      TextField(
+                                        controller: telegramChatId,
+                                        decoration: const InputDecoration(
+                                          labelText:
+                                              'Telegram chat ID (необязательно)',
+                                        ),
+                                      ),
+                                      TextField(
+                                        controller: vkPeerId,
+                                        decoration: const InputDecoration(
+                                          labelText:
+                                              'VK peer ID (необязательно)',
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  TextField(
-                                    controller: phone,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Телефон',
-                                    ),
-                                  ),
-                                  TextField(
-                                    controller: car,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Автомобиль',
-                                    ),
-                                  ),
-                                  TextField(
-                                    controller: responsible,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Ответственный',
-                                    ),
-                                  ),
-                                  TextField(
-                                    controller: telegramChatId,
-                                    decoration: const InputDecoration(
-                                      labelText:
-                                          'Telegram chat ID (необязательно)',
-                                    ),
-                                  ),
-                                  TextField(
-                                    controller: vkPeerId,
-                                    decoration: const InputDecoration(
-                                      labelText: 'VK peer ID (необязательно)',
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ),
                               actions: [
                                 TextButton(
@@ -10792,6 +11309,11 @@ $instructions
                         },
                   icon: const Icon(Icons.person_add),
                   label: const Text('Новый клиент'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF28C28),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 42),
+                  ),
                 ),
               ],
             ),
@@ -11502,26 +12024,48 @@ $instructions
   double _num(String v) =>
       double.tryParse(v.replaceAll(' ', '').replaceAll(',', '.')) ?? 0;
 
-  RequestCancellation _beginSheetsRequest() {
-    _sheetsCancellation?.cancel();
+  RequestCancellation _beginDealsRequest() {
+    _dealsCancellation?.cancel();
     final cancellation = RequestCancellation();
-    _sheetsCancellation = cancellation;
+    _dealsCancellation = cancellation;
     return cancellation;
   }
 
+  RequestCancellation _beginAccountingRequest() {
+    _accountingCancellation?.cancel();
+    final cancellation = RequestCancellation();
+    _accountingCancellation = cancellation;
+    return cancellation;
+  }
+
+  void _startSheetLoad({bool clearError = false}) {
+    _activeSheetLoads++;
+    if (mounted) {
+      setState(() {
+        loading = true;
+        if (clearError) sheetError = null;
+      });
+    }
+  }
+
+  void _finishSheetLoad() {
+    _activeSheetLoads = (_activeSheetLoads - 1).clamp(0, 1 << 20);
+    if (mounted) setState(() => loading = _activeSheetLoads > 0);
+  }
+
   Future<void> _loadDeals() async {
-    final requestId = ++_sheetsRequestId;
-    final cancellation = _beginSheetsRequest();
-    if (mounted) setState(() => loading = true);
+    final requestId = ++_dealsRequestId;
+    final cancellation = _beginDealsRequest();
+    _startSheetLoad();
     try {
       if (currentSheetId.isEmpty && !_hasProtectedSheetAccess) {
         throw Exception('Не задан ID Google Sheets');
       }
       final rowsFromSheet = await _sheets.readSheet(
-        SheetsSchema.dealsSheet,
+        _dataSource('deals', SheetsSchema.dealsSheet),
         cancellation: cancellation,
       );
-      if (requestId != _sheetsRequestId) return;
+      if (requestId != _dealsRequestId) return;
       // Рабочий лист «Август» может содержать несколько блоков с датами,
       // строками «Авто»/«ИТОГО» и параллельными финансовыми колонками. Нельзя
       // валидировать только первую строку как единую таблицу: это удаляло бы
@@ -11538,7 +12082,7 @@ $instructions
       );
       _rebuildDealRows();
     } catch (e) {
-      if (e is RequestCancelledException || requestId != _sheetsRequestId) {
+      if (e is RequestCancelledException || requestId != _dealsRequestId) {
         return;
       }
       sheetsOfflineMode = true;
@@ -11558,9 +12102,7 @@ $instructions
           ? 'Не удалось загрузить сделки из Google Sheets.'
           : 'Google Sheets недоступна. Показаны последние сохранённые данные.';
     } finally {
-      if (mounted && requestId == _sheetsRequestId) {
-        setState(() => loading = false);
-      }
+      _finishSheetLoad();
     }
   }
 
@@ -11649,8 +12191,6 @@ $instructions
     final source = TextEditingController(text: preset('source'));
     final note = TextEditingController(text: preset('note'));
     String status = 'Выполнен';
-    VehicleClass vehicleClass = VehicleClass.fromKey(preset('vehicleClass'));
-    final manuallyPricedRows = <TextEditingController>{};
     final controllers = [
       date,
       client,
@@ -11672,6 +12212,7 @@ $instructions
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialog) {
+          final compact = MediaQuery.sizeOf(dialogContext).width < 600;
           final income = serviceRows.fold<double>(
             0,
             (sum, row) => sum + _num(row['price']!.text),
@@ -11723,7 +12264,7 @@ $instructions
             bool number = false,
             int minLines = 1,
           }) => SizedBox(
-            width: 270,
+            width: compact ? double.infinity : 270,
             child: TextField(
               controller: controller,
               minLines: minLines,
@@ -11736,9 +12277,17 @@ $instructions
             ),
           );
           return AlertDialog(
+            // Keep the system dialog constraints on phones. Removing them made
+            // the form's scroll area collapse on iOS.
+            insetPadding: compact
+                ? const EdgeInsets.all(12)
+                : const EdgeInsets.all(24),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(compact ? 8 : 12),
+            ),
             title: const Text('Новая сделка'),
             content: SizedBox(
-              width: 590,
+              width: compact ? 520 : 590,
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -11757,40 +12306,7 @@ $instructions
                         field('Телефон', phone),
                         field('Автомобиль', car),
                         SizedBox(
-                          width: 270,
-                          child: DropdownButtonFormField<VehicleClass>(
-                            initialValue: vehicleClass,
-                            decoration: const InputDecoration(
-                              labelText: 'Класс автомобиля',
-                            ),
-                            items: VehicleClass.values
-                                .map(
-                                  (value) => DropdownMenuItem(
-                                    value: value,
-                                    child: Text(value.label),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (value) => setDialog(() {
-                              vehicleClass = value ?? vehicleClass;
-                              for (final row in serviceRows) {
-                                final catalog = _serviceByName(
-                                  row['name']!.text,
-                                );
-                                if (catalog != null &&
-                                    !manuallyPricedRows.contains(
-                                      row['price'],
-                                    )) {
-                                  row['price']!.text = catalog
-                                      .priceFor(vehicleClass)
-                                      .toStringAsFixed(0);
-                                }
-                              }
-                            }),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 560,
+                          width: double.infinity,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -11808,84 +12324,57 @@ $instructions
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
                                     children: [
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child:
-                                                DropdownButtonFormField<String>(
-                                                  initialValue: _serviceByName(
-                                                    row['name']!.text,
-                                                  )?.name,
-                                                  isExpanded: true,
-                                                  decoration:
-                                                      const InputDecoration(
-                                                        labelText: 'Услуга *',
-                                                      ),
-                                                  items: _activeServiceCatalog
-                                                      .map(
-                                                        (
-                                                          catalog,
-                                                        ) => DropdownMenuItem(
-                                                          value: catalog.name,
-                                                          child: Text(
-                                                            catalog.name,
-                                                            overflow:
-                                                                TextOverflow
-                                                                    .ellipsis,
+                                      LayoutBuilder(
+                                        builder: (context, constraints) {
+                                          final narrow =
+                                              constraints.maxWidth < 440;
+                                          final picker =
+                                              DropdownButtonFormField<String>(
+                                                initialValue: _serviceByName(
+                                                  row['name']!.text,
+                                                )?.name,
+                                                isExpanded: true,
+                                                decoration:
+                                                    const InputDecoration(
+                                                      labelText: 'Услуга *',
+                                                    ),
+                                                items: _activeServiceCatalog
+                                                    .map(
+                                                      (catalog) =>
+                                                          DropdownMenuItem(
+                                                            value: catalog.name,
+                                                            child: Text(
+                                                              catalog.name,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .ellipsis,
+                                                            ),
                                                           ),
-                                                        ),
-                                                      )
-                                                      .toList(),
-                                                  onChanged: (selected) =>
-                                                      setDialog(() {
-                                                        final catalog =
-                                                            _serviceByName(
-                                                              selected ?? '',
-                                                            );
-                                                        row['name']!.text =
-                                                            catalog?.name ?? '';
-                                                        if (catalog != null &&
-                                                            !manuallyPricedRows
-                                                                .contains(
-                                                                  row['price'],
-                                                                )) {
-                                                          row['price']!
-                                                              .text = catalog
-                                                              .priceFor(
-                                                                vehicleClass,
-                                                              )
-                                                              .toStringAsFixed(
-                                                                0,
-                                                              );
-                                                        }
-                                                      }),
-                                                ),
-                                          ),
-                                          const SizedBox(width: 10),
-                                          SizedBox(
-                                            width: 150,
-                                            child: TextField(
-                                              controller: row['price'],
-                                              keyboardType:
-                                                  const TextInputType.numberWithOptions(
-                                                    decimal: true,
-                                                  ),
-                                              onChanged: (_) => setDialog(() {
-                                                manuallyPricedRows.add(
-                                                  row['price']!,
-                                                );
-                                              }),
-                                              decoration: InputDecoration(
-                                                labelText:
-                                                    manuallyPricedRows.contains(
-                                                      row['price'],
                                                     )
-                                                    ? 'Цена, ₽ • ручная'
-                                                    : 'Цена, ₽',
-                                              ),
+                                                    .toList(),
+                                                onChanged: (selected) =>
+                                                    setDialog(() {
+                                                      final catalog =
+                                                          _serviceByName(
+                                                            selected ?? '',
+                                                          );
+                                                      row['name']!.text =
+                                                          catalog?.name ?? '';
+                                                    }),
+                                              );
+                                          final price = TextField(
+                                            controller: row['price'],
+                                            keyboardType:
+                                                const TextInputType.numberWithOptions(
+                                                  decimal: true,
+                                                ),
+                                            onChanged: (_) => setDialog(() {}),
+                                            decoration: const InputDecoration(
+                                              labelText: 'Цена, ₽',
                                             ),
-                                          ),
-                                          IconButton(
+                                          );
+                                          final remove = IconButton(
+                                            tooltip: 'Убрать работу',
                                             onPressed: () => setDialog(() {
                                               if (serviceRows.length > 1) {
                                                 serviceRows.remove(row);
@@ -11894,8 +12383,35 @@ $instructions
                                             icon: const Icon(
                                               Icons.remove_circle_outline,
                                             ),
-                                          ),
-                                        ],
+                                          );
+                                          if (narrow) {
+                                            return Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                picker,
+                                                const SizedBox(height: 8),
+                                                Row(
+                                                  children: [
+                                                    Expanded(child: price),
+                                                    remove,
+                                                  ],
+                                                ),
+                                              ],
+                                            );
+                                          }
+                                          return Row(
+                                            children: [
+                                              Expanded(child: picker),
+                                              const SizedBox(width: 10),
+                                              SizedBox(
+                                                width: 150,
+                                                child: price,
+                                              ),
+                                              remove,
+                                            ],
+                                          );
+                                        },
                                       ),
                                       const SizedBox(height: 8),
                                       Row(
@@ -12120,11 +12636,7 @@ $instructions
                             status,
                             client.text.trim(),
                             source.text.trim(),
-                            [
-                              note.text.trim(),
-                              if (manuallyPricedRows.contains(item['price']))
-                                '[ручная цена; ${vehicleClass.label}]',
-                            ].where((value) => value.isNotEmpty).join('\n'),
+                            note.text.trim(),
                             isManual ? 'Да' : 'Нет',
                             'deal-${DateTime.now().microsecondsSinceEpoch}',
                           ]);
@@ -12194,144 +12706,361 @@ $instructions
         ),
         const SizedBox(height: 12),
         if (sheetsOfflineMode) OfflineStatusBanner(lastSynced: lastSheetsSync),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            DropdownButton<String>(
-              value: periodFilter,
-              items: const [
-                DropdownMenuItem(value: "Август", child: Text("Август")),
-                DropdownMenuItem(
-                  value: "Неделя",
-                  child: Text("Последняя неделя"),
-                ),
-                DropdownMenuItem(
-                  value: "Месяц",
-                  child: Text("Последний месяц"),
-                ),
-                DropdownMenuItem(
-                  value: "Диапазон",
-                  child: Text("Произвольный период"),
-                ),
-                DropdownMenuItem(value: "Все", child: Text("Все данные")),
-              ],
-              onChanged: (v) {
-                if (v == 'Диапазон') {
-                  _selectCustomDealPeriod();
-                } else if (v != null) {
-                  setState(() {
-                    periodFilter = v;
-                    dealsPage = 0;
-                  });
-                }
-              },
-            ),
-            const SizedBox(width: 16),
-            DropdownButton<bool>(
-              value: dealsOldestFirst,
-              items: const [
-                DropdownMenuItem(value: false, child: Text('Сначала новые')),
-                DropdownMenuItem(value: true, child: Text('Сначала старые')),
-              ],
-              onChanged: (v) {
-                if (v != null) setState(() => dealsOldestFirst = v);
-              },
-            ),
-            const SizedBox(width: 16),
-            ElevatedButton.icon(
-              onPressed: loading ? null : _loadDeals,
-              icon: const Icon(Icons.sync),
-              label: const Text('Синхронизировать'),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: loading
-                  ? null
-                  : () async {
-                      final count = await _restoreManualDealsFromExport();
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            count == 0
-                                ? 'Резервный CSV с локальными сделками не найден'
-                                : 'Восстановлено локальных сделок: $count',
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 600;
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: periodFilter,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            labelText: 'Период',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'Август',
+                              child: Text('Август'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Неделя',
+                              child: Text('Неделя'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Месяц',
+                              child: Text('Месяц'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Диапазон',
+                              child: Text('Диапазон'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Все',
+                              child: Text('Все данные'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value == 'Диапазон') {
+                              _selectCustomDealPeriod();
+                            } else if (value != null) {
+                              setState(() {
+                                periodFilter = value;
+                                dealsPage = 0;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: DropdownButtonFormField<String?>(
+                          initialValue: dealStatusFilter,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            labelText: 'Статус',
+                          ),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text('Все статусы'),
+                            ),
+                            ...clientStatuses.map(
+                              (status) => DropdownMenuItem<String?>(
+                                value: status,
+                                child: Text(status),
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) => setState(() {
+                            dealStatusFilter = value;
+                            dealsPage = 0;
+                          }),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _canEdit('deals') ? _addManualDeal : null,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Новая сделка'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF28C28),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(44),
                           ),
                         ),
-                      );
-                    },
-              icon: const Icon(Icons.restore),
-              label: const Text('Восстановить локальные'),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-              onPressed: !_canEdit('deals') ? null : _addManualDeal,
-              icon: const Icon(Icons.add),
-              label: const Text('Новая сделка'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFF28C28),
-                foregroundColor: Colors.white,
-              ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: _exportDealsCsv,
-              icon: const Icon(Icons.download),
-              label: const Text('Экспорт CSV'),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: _exportDealsXlsx,
-              icon: const Icon(Icons.table_view),
-              label: const Text('Экспорт Excel'),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: dealRows.isEmpty ? null : _chooseColumns,
-              icon: const Icon(Icons.view_column),
-              label: const Text('Поля'),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: dealRows.isEmpty ? null : _columnWidths,
-              icon: const Icon(Icons.tune),
-              label: const Text('Ширина'),
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              label: const Text('Перенос текста'),
-              selected: wrapDealText,
-              onSelected: (v) {
-                setState(() => wrapDealText = v);
-                unawaited(_savePrefs());
-              },
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              label: const Text('Kanban'),
-              selected: dealsKanban,
-              onSelected: (v) => setState(() => dealsKanban = v),
-            ),
-            const SizedBox(width: 8),
-            DropdownButton<String?>(
-              value: dealStatusFilter,
-              hint: const Text('Все статусы'),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Все статусы'),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Синхронизировать сделки',
+                        onPressed: loading ? null : _loadDeals,
+                        icon: const Icon(Icons.sync),
+                      ),
+                      PopupMenuButton<String>(
+                        tooltip: 'Дополнительные действия',
+                        icon: const Icon(Icons.more_horiz),
+                        onSelected: (action) async {
+                          switch (action) {
+                            case 'sort':
+                              setState(
+                                () => dealsOldestFirst = !dealsOldestFirst,
+                              );
+                              break;
+                            case 'restore':
+                              final count =
+                                  await _restoreManualDealsFromExport();
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    count == 0
+                                        ? 'Резервный CSV с локальными сделками не найден'
+                                        : 'Восстановлено локальных сделок: $count',
+                                  ),
+                                ),
+                              );
+                              break;
+                            case 'csv':
+                              await _exportDealsCsv();
+                              break;
+                            case 'xlsx':
+                              await _exportDealsXlsx();
+                              break;
+                            case 'columns':
+                              await _chooseColumns();
+                              break;
+                            case 'widths':
+                              await _columnWidths();
+                              break;
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'sort',
+                            child: ListTile(
+                              leading: Icon(
+                                dealsOldestFirst
+                                    ? Icons.south_outlined
+                                    : Icons.north_outlined,
+                              ),
+                              title: Text(
+                                dealsOldestFirst
+                                    ? 'Сначала новые'
+                                    : 'Сначала старые',
+                              ),
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'restore',
+                            child: ListTile(
+                              leading: Icon(Icons.restore),
+                              title: Text('Восстановить локальные'),
+                            ),
+                          ),
+                          const PopupMenuDivider(),
+                          const PopupMenuItem(
+                            value: 'csv',
+                            child: ListTile(
+                              leading: Icon(Icons.download_outlined),
+                              title: Text('Экспорт CSV'),
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'xlsx',
+                            child: ListTile(
+                              leading: Icon(Icons.table_view_outlined),
+                              title: Text('Экспорт Excel'),
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'columns',
+                            child: ListTile(
+                              leading: Icon(Icons.view_column_outlined),
+                              title: Text('Поля таблицы'),
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'widths',
+                            child: ListTile(
+                              leading: Icon(Icons.tune),
+                              title: Text('Ширина столбцов'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilterChip(
+                      label: const Text('Воронка сделок'),
+                      selected: dealsKanban,
+                      onSelected: (value) =>
+                          setState(() => dealsKanban = value),
+                    ),
+                  ),
+                ],
+              );
+            }
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                DropdownButton<String>(
+                  value: periodFilter,
+                  items: const [
+                    DropdownMenuItem(value: "Август", child: Text("Август")),
+                    DropdownMenuItem(
+                      value: "Неделя",
+                      child: Text("Последняя неделя"),
+                    ),
+                    DropdownMenuItem(
+                      value: "Месяц",
+                      child: Text("Последний месяц"),
+                    ),
+                    DropdownMenuItem(
+                      value: "Диапазон",
+                      child: Text("Произвольный период"),
+                    ),
+                    DropdownMenuItem(value: "Все", child: Text("Все данные")),
+                  ],
+                  onChanged: (v) {
+                    if (v == 'Диапазон') {
+                      _selectCustomDealPeriod();
+                    } else if (v != null) {
+                      setState(() {
+                        periodFilter = v;
+                        dealsPage = 0;
+                      });
+                    }
+                  },
                 ),
-                ...clientStatuses.map(
-                  (s) => DropdownMenuItem<String?>(value: s, child: Text(s)),
+                const SizedBox(width: 16),
+                DropdownButton<bool>(
+                  value: dealsOldestFirst,
+                  items: const [
+                    DropdownMenuItem(
+                      value: false,
+                      child: Text('Сначала новые'),
+                    ),
+                    DropdownMenuItem(
+                      value: true,
+                      child: Text('Сначала старые'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => dealsOldestFirst = v);
+                  },
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton.icon(
+                  onPressed: loading ? null : _loadDeals,
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Синхронизировать'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: loading
+                      ? null
+                      : () async {
+                          final count = await _restoreManualDealsFromExport();
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                count == 0
+                                    ? 'Резервный CSV с локальными сделками не найден'
+                                    : 'Восстановлено локальных сделок: $count',
+                              ),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.restore),
+                  label: const Text('Восстановить локальные'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: !_canEdit('deals') ? null : _addManualDeal,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Новая сделка'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF28C28),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _exportDealsCsv,
+                  icon: const Icon(Icons.download),
+                  label: const Text('Экспорт CSV'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _exportDealsXlsx,
+                  icon: const Icon(Icons.table_view),
+                  label: const Text('Экспорт Excel'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: dealRows.isEmpty ? null : _chooseColumns,
+                  icon: const Icon(Icons.view_column),
+                  label: const Text('Поля'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: dealRows.isEmpty ? null : _columnWidths,
+                  icon: const Icon(Icons.tune),
+                  label: const Text('Ширина'),
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  label: const Text('Перенос текста'),
+                  selected: wrapDealText,
+                  onSelected: (v) {
+                    setState(() => wrapDealText = v);
+                    unawaited(_savePrefs());
+                  },
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  label: const Text('Kanban'),
+                  selected: dealsKanban,
+                  onSelected: (v) => setState(() => dealsKanban = v),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<String?>(
+                  value: dealStatusFilter,
+                  hint: const Text('Все статусы'),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Все статусы'),
+                    ),
+                    ...clientStatuses.map(
+                      (s) =>
+                          DropdownMenuItem<String?>(value: s, child: Text(s)),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() {
+                    dealStatusFilter = v;
+                    dealsPage = 0;
+                  }),
                 ),
               ],
-              onChanged: (v) => setState(() {
-                dealStatusFilter = v;
-                dealsPage = 0;
-              }),
-            ),
-          ],
+            );
+          },
         ),
         const SizedBox(height: 16),
         if (dealImportErrors.isNotEmpty)
@@ -12688,23 +13417,18 @@ $instructions
   }
 
   Future<void> _loadAccounting() async {
-    final requestId = ++_sheetsRequestId;
-    final cancellation = _beginSheetsRequest();
-    if (mounted) {
-      setState(() {
-        loading = true;
-        sheetError = null;
-      });
-    }
+    final requestId = ++_accountingRequestId;
+    final cancellation = _beginAccountingRequest();
+    _startSheetLoad(clearError: true);
     try {
       if (currentSheetId.isEmpty && !_hasProtectedSheetAccess) {
         throw Exception('Не задан ID Google Sheets');
       }
       accountingRows = await _sheets.readSheet(
-        SheetsSchema.accountingSheet,
+        _dataSource('accounting', SheetsSchema.accountingSheet),
         cancellation: cancellation,
       );
-      if (requestId != _sheetsRequestId) return;
+      if (requestId != _accountingRequestId) return;
       if (accountingRows.isNotEmpty && accountingRows.first.isEmpty) {
         throw Exception('Пустая строка заголовков');
       }
@@ -12720,7 +13444,7 @@ $instructions
       // описание (7-я) и сумма (8-я). Подтягиваем их в историю бизнес-счёта.
       try {
         final expRows = await _sheets.readSheet(
-          SheetsSchema.expensesSheet,
+          _dataSource('expenses', SheetsSchema.expensesSheet),
           cancellation: cancellation,
         );
         businessTransactions.addAll(
@@ -12732,7 +13456,7 @@ $instructions
         );
       } catch (_) {}
     } catch (e) {
-      if (e is RequestCancelledException || requestId != _sheetsRequestId) {
+      if (e is RequestCancelledException || requestId != _accountingRequestId) {
         return;
       }
       sheetsOfflineMode = true;
@@ -12752,9 +13476,7 @@ $instructions
           ? 'Не удалось загрузить таблицу. Проверьте доступ по ссылке.'
           : 'Google Sheets недоступна. Показаны последние сохранённые данные.';
     } finally {
-      if (mounted && requestId == _sheetsRequestId) {
-        setState(() => loading = false);
-      }
+      _finishSheetLoad();
     }
   }
 
@@ -12880,37 +13602,44 @@ $instructions
         title: 'Выручка',
         value: _money(_dashboardSum((deal) => deal.revenue)),
         icon: Icons.payments_outlined,
+        accentColor: const Color(0xFF1FA971),
       ),
       OverviewMetric(
         title: 'Расходы',
         value: _money(_dashboardSum((deal) => deal.expenses)),
         icon: Icons.receipt_long_outlined,
+        accentColor: const Color(0xFFE06C75),
       ),
       OverviewMetric(
         title: 'Чистая прибыль',
         value: _money(_dashboardSum((deal) => deal.ownerProfit)),
         icon: Icons.trending_up,
+        accentColor: const Color(0xFF4A90E2),
       ),
       OverviewMetric(
         title: 'Бизнес-счёт',
         value: _money(_businessBalance()),
         icon: Icons.account_balance_outlined,
+        accentColor: const Color(0xFFF28C28),
         onTap: _openBusinessAccount,
       ),
       OverviewMetric(
         title: 'Работникам',
         value: _money(_dashboardSum((deal) => deal.workerPayout)),
         icon: Icons.groups_outlined,
+        accentColor: const Color(0xFF8B6FE8),
       ),
       OverviewMetric(
         title: 'Артём',
         value: _money(_dashboardSum((deal) => deal.ownerProfit / 2)),
         icon: Icons.person_outline,
+        accentColor: const Color(0xFF4A90E2),
       ),
       OverviewMetric(
         title: 'Дмитрий',
         value: _money(_dashboardSum((deal) => deal.ownerProfit / 2)),
         icon: Icons.person_outline,
+        accentColor: const Color(0xFF4A90E2),
       ),
       OverviewMetric(
         title: 'Егор',
@@ -12922,16 +13651,19 @@ $instructions
           ),
         ),
         icon: Icons.engineering_outlined,
+        accentColor: const Color(0xFF1FA971),
       ),
       OverviewMetric(
         title: 'Средний чек',
         value: _money(_dashboardAverageCheck()),
         icon: Icons.calculate_outlined,
+        accentColor: const Color(0xFFF28C28),
       ),
       OverviewMetric(
         title: 'Средняя выручка в день',
         value: _money(_dashboardAverageDaily()),
         icon: Icons.date_range_outlined,
+        accentColor: const Color(0xFF8B6FE8),
       ),
     ],
     loadedDeals: typedDeals.where(_dashboardDealMatches).length,
@@ -12940,9 +13672,6 @@ $instructions
     borderColor: _cardBorderColor,
     mainTextColor: _mainTextColor,
     mutedTextColor: _mutedTextColor,
-    financialSummary: sheetError == null ? _financialSummary() : null,
-    reconciliationReport: _reconciliationReport(),
-    performanceReport: _performanceReport(),
     workspace: DashboardWorkspace(
       periodLabel: dashboardPeriod,
       periodOptions: _dashboardPeriods,
@@ -12956,6 +13685,7 @@ $instructions
         if (mounted) setState(() {});
       },
       notes: dashboardNotes,
+      canEditNotes: _canEdit('dashboard'),
       onEditNote: (note) => unawaited(_editDashboardNote(note)),
       onDeleteNote: (note) => unawaited(_deleteDashboardNote(note)),
       onAddNote: () => unawaited(_editDashboardNote()),
@@ -13038,16 +13768,6 @@ $instructions
     return from == null ? null : DateTime(from.year, from.month + 1, 0);
   }
 
-  bool _dashboardDateMatches(String rawDate) {
-    final from = _dashboardFrom;
-    final to = _dashboardTo;
-    if (from == null || to == null) return true;
-    final date = DateTime.tryParse(rawDate) ?? _parseRuDate(rawDate);
-    if (date == null) return true;
-    return !date.isBefore(DateTime(from.year, from.month, from.day)) &&
-        !date.isAfter(DateTime(to.year, to.month, to.day, 23, 59, 59));
-  }
-
   Widget _botTest() => BotTestWorkspace(
     conversations: botConversations,
     selectedConversationId: selectedBotConversationId,
@@ -13074,35 +13794,6 @@ $instructions
     onAnalyzeAvito: () => unawaited(_analyzeAvitoForKnowledge()),
   );
 
-  Widget _financialSummary() {
-    final snapshot = summarizeDeals(typedDeals.where(_dashboardDealMatches));
-    return FinancialSummaryCard(
-      snapshot: snapshot,
-      materialCost: _linkedMaterialCost(),
-      surfaceColor: _surfaceColor,
-      borderColor: _cardBorderColor,
-      mainTextColor: _mainTextColor,
-    );
-  }
-
-  double _linkedMaterialCost() {
-    final prices = <String, double>{
-      for (final item in stockItems) item.id: item.purchasePrice,
-    };
-    return stockMovements
-        .where(
-          (movement) =>
-              movement.type == 'Расход' &&
-              movement.dealId.isNotEmpty &&
-              _dashboardDateMatches(movement.date),
-        )
-        .fold<double>(
-          0,
-          (sum, movement) =>
-              sum + movement.costAt(prices[movement.itemId] ?? 0),
-        );
-  }
-
   String _money(num value) => '${value.toStringAsFixed(0)} ₽';
 
   Widget _reconciliationReport() {
@@ -13119,19 +13810,6 @@ $instructions
       borderColor: _cardBorderColor,
       mainTextColor: _mainTextColor,
       mutedTextColor: _mutedTextColor,
-    );
-  }
-
-  Widget _performanceReport() {
-    final report = summarizeDealPerformance(
-      typedDeals.where(_dashboardDealMatches),
-    );
-    return DealPerformanceCard(
-      report: report,
-      totalDeals: typedDeals.where(_dashboardDealMatches).length,
-      surfaceColor: _surfaceColor,
-      borderColor: _cardBorderColor,
-      mainTextColor: _mainTextColor,
     );
   }
 

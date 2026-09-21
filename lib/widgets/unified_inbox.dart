@@ -42,10 +42,21 @@ class UnifiedInboxList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (dialogs.isEmpty) {
       return Center(
-        child: Text(
-          'Диалогов пока нет. Подключите канал или обновите данные.',
-          style: TextStyle(color: mutedTextColor),
-          textAlign: TextAlign.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.forum_outlined,
+              size: 28,
+              color: mutedTextColor.withValues(alpha: .75),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Диалогов пока нет. Подключите канал или обновите данные.',
+              style: TextStyle(color: mutedTextColor),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
       );
     }

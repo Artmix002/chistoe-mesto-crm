@@ -76,6 +76,7 @@ class StockPage extends StatelessWidget {
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFB2B8C2)
         : const Color(0xFF626975);
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -90,6 +91,11 @@ class StockPage extends StatelessWidget {
               onPressed: canEdit ? onAdd : null,
               icon: const Icon(Icons.add),
               label: const Text('Добавить товар'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFF28C28),
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 42),
+              ),
             ),
             Text('Позиций: ${items.length}', style: TextStyle(color: muted)),
             Text(
@@ -133,10 +139,37 @@ class StockPage extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         if (filtered.isEmpty)
-          Text(
-            items.isEmpty
-                ? 'Склад пуст. Добавьте первый товар.'
-                : 'По вашему запросу товаров нет.',
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 42, horizontal: 24),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    items.isEmpty
+                        ? Icons.inventory_2_outlined
+                        : Icons.search_off_outlined,
+                    size: 34,
+                    color: muted,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    items.isEmpty
+                        ? 'Склад пока пуст'
+                        : 'По вашему запросу товаров нет',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    items.isEmpty
+                        ? 'Добавьте первый товар, чтобы учитывать остатки и списания.'
+                        : 'Измените запрос или выберите другую категорию.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: muted),
+                  ),
+                ],
+              ),
+            ),
           ),
         ...pagination.items.map(
           (item) => Card(
@@ -144,32 +177,78 @@ class StockPage extends StatelessWidget {
               title: Text(item.name),
               subtitle: Text(
                 '${item.category} • Остаток: ${item.quantity} ${item.unit} • минимум: ${item.minQuantity} • цена: ${item.purchasePrice.toStringAsFixed(0)} ₽ • движений: ${movementCount(item)}',
+                maxLines: compact ? 3 : null,
+                overflow: compact ? TextOverflow.ellipsis : null,
               ),
               onTap: canEdit ? () => onEdit(item) : null,
               onLongPress: () => onShowMovements(item),
-              trailing: Wrap(
-                spacing: 2,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  if (item.quantity <= item.minQuantity)
-                    const Chip(label: Text('Пополнить')),
-                  IconButton(
-                    icon: const Icon(Icons.swap_vert),
-                    tooltip: 'Движение',
-                    onPressed: canEdit ? () => onMovement(item) : null,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.history),
-                    tooltip: 'История движений',
-                    onPressed: () => onShowMovements(item),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: 'Удалить товар',
-                    onPressed: canEdit ? () => unawaited(onDelete(item)) : null,
-                  ),
-                ],
-              ),
+              trailing: compact
+                  ? PopupMenuButton<_StockAction>(
+                      tooltip: 'Действия с товаром',
+                      onSelected: (action) {
+                        switch (action) {
+                          case _StockAction.movement:
+                            onMovement(item);
+                            break;
+                          case _StockAction.history:
+                            onShowMovements(item);
+                            break;
+                          case _StockAction.delete:
+                            unawaited(onDelete(item));
+                            break;
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        if (canEdit)
+                          const PopupMenuItem(
+                            value: _StockAction.movement,
+                            child: ListTile(
+                              leading: Icon(Icons.swap_vert),
+                              title: Text('Движение'),
+                            ),
+                          ),
+                        const PopupMenuItem(
+                          value: _StockAction.history,
+                          child: ListTile(
+                            leading: Icon(Icons.history),
+                            title: Text('История'),
+                          ),
+                        ),
+                        if (canEdit)
+                          const PopupMenuItem(
+                            value: _StockAction.delete,
+                            child: ListTile(
+                              leading: Icon(Icons.delete_outline),
+                              title: Text('Удалить'),
+                            ),
+                          ),
+                      ],
+                    )
+                  : Wrap(
+                      spacing: 2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (item.quantity <= item.minQuantity)
+                          const Chip(label: Text('Пополнить')),
+                        IconButton(
+                          icon: const Icon(Icons.swap_vert),
+                          tooltip: 'Движение',
+                          onPressed: canEdit ? () => onMovement(item) : null,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.history),
+                          tooltip: 'История движений',
+                          onPressed: () => onShowMovements(item),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          tooltip: 'Удалить товар',
+                          onPressed: canEdit
+                              ? () => unawaited(onDelete(item))
+                              : null,
+                        ),
+                      ],
+                    ),
             ),
           ),
         ),
@@ -198,3 +277,5 @@ class StockPage extends StatelessWidget {
     );
   }
 }
+
+enum _StockAction { movement, history, delete }

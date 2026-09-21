@@ -85,6 +85,18 @@ Map<String, dynamic> buildSyncPayload(
         'scope': 'appointments',
         'events': appointments.map(Map<String, dynamic>.from).toList(),
       };
+    case 'Заметки':
+      return {
+        ...base,
+        'scope': 'dashboardNotes',
+        'notes': stickyNotes.map(Map<String, dynamic>.from).toList(),
+      };
+    case 'План выручки':
+      return {
+        ...base,
+        'scope': 'revenuePlans',
+        'revenuePlans': revenuePlans.map(Map<String, dynamic>.from).toList(),
+      };
     case 'Рабочее пространство':
       return {
         ...base,

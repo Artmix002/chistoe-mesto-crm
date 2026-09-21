@@ -50,7 +50,7 @@ class VkInbox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    width: 980,
+    constraints: const BoxConstraints(maxWidth: 980),
     height: 520,
     padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
@@ -83,73 +83,85 @@ class VkInbox extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         Expanded(
-          child: Row(
-            children: [
-              SizedBox(
-                width: 310,
-                child: conversations.isEmpty
-                    ? Center(
-                        child: Text(
-                          loading ? 'Загружаем…' : 'Диалогов пока нет',
-                          style: TextStyle(color: mutedTextColor),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: conversations.length,
-                        separatorBuilder: (_, _) =>
-                            Divider(height: 1, color: borderColor),
-                        itemBuilder: (_, index) {
-                          final item = conversations[index];
-                          final last = item['last_message'] is Map
-                              ? Map<String, dynamic>.from(item['last_message'])
-                              : <String, dynamic>{};
-                          final selected =
-                              selectedConversation?['conversation']?['peer']?['id'] ==
-                              item['conversation']?['peer']?['id'];
-                          return InkWell(
-                            onTap: () => onOpenConversation(item),
-                            child: Container(
-                              color: selected
-                                  ? const Color(
-                                      0xFFF28C28,
-                                    ).withValues(alpha: darkMode ? .18 : .1)
-                                  : Colors.transparent,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 11,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    titleOf(item),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: mainTextColor,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    textOf(last),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: mutedTextColor,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 680;
+              final conversationsList = conversations.isEmpty
+                  ? Center(
+                      child: Text(
+                        loading ? 'Загружаем…' : 'Диалогов пока нет',
+                        style: TextStyle(color: mutedTextColor),
                       ),
-              ),
-              VerticalDivider(width: 26, color: borderColor),
-              Expanded(child: _conversationView(context)),
-            ],
+                    )
+                  : ListView.separated(
+                      itemCount: conversations.length,
+                      separatorBuilder: (_, _) =>
+                          Divider(height: 1, color: borderColor),
+                      itemBuilder: (_, index) {
+                        final item = conversations[index];
+                        final last = item['last_message'] is Map
+                            ? Map<String, dynamic>.from(item['last_message'])
+                            : <String, dynamic>{};
+                        final selected =
+                            selectedConversation?['conversation']?['peer']?['id'] ==
+                            item['conversation']?['peer']?['id'];
+                        return InkWell(
+                          onTap: () => onOpenConversation(item),
+                          child: Container(
+                            color: selected
+                                ? const Color(
+                                    0xFFF28C28,
+                                  ).withValues(alpha: darkMode ? .18 : .1)
+                                : Colors.transparent,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 11,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  titleOf(item),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: mainTextColor,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  textOf(last),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: mutedTextColor,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+              if (compact) {
+                return Column(
+                  children: [
+                    SizedBox(height: 122, child: conversationsList),
+                    Divider(height: 20, color: borderColor),
+                    Expanded(child: _conversationView(context)),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  SizedBox(width: 310, child: conversationsList),
+                  VerticalDivider(width: 26, color: borderColor),
+                  Expanded(child: _conversationView(context)),
+                ],
+              );
+            },
           ),
         ),
       ],

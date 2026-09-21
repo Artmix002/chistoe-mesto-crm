@@ -11,6 +11,7 @@ class MessagesPage extends StatelessWidget {
     required this.canRetry,
     required this.onRetry,
     required this.onDiagnostics,
+    this.onRefresh,
   });
 
   final List<Widget> sections;
@@ -21,6 +22,7 @@ class MessagesPage extends StatelessWidget {
   final bool canRetry;
   final VoidCallback onRetry;
   final VoidCallback onDiagnostics;
+  final Future<void> Function()? onRefresh;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -36,18 +38,32 @@ class MessagesPage extends StatelessWidget {
               color: mainTextColor,
             ),
           );
-          final diagnostics = OutlinedButton.icon(
-            onPressed: onDiagnostics,
-            icon: const Icon(Icons.health_and_safety_outlined),
-            label: const Text('Диагностика интеграций'),
+          final actions = Wrap(
+            spacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (onRefresh != null)
+                IconButton(
+                  tooltip: 'Обновить сообщения',
+                  onPressed: () {
+                    onRefresh!();
+                  },
+                  icon: const Icon(Icons.refresh),
+                ),
+              OutlinedButton.icon(
+                onPressed: onDiagnostics,
+                icon: const Icon(Icons.health_and_safety_outlined),
+                label: const Text('Диагностика интеграций'),
+              ),
+            ],
           );
           if (constraints.maxWidth < 620) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [title, const SizedBox(height: 8), diagnostics],
+              children: [title, const SizedBox(height: 8), actions],
             );
           }
-          return Row(children: [title, const Spacer(), diagnostics]);
+          return Row(children: [title, const Spacer(), actions]);
         },
       ),
       const SizedBox(height: 6),

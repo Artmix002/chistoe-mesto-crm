@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../schema.dart';
+import '../sync_status.dart';
 
 /// Настройки подключения и локального рабочего пространства.
 ///
@@ -37,6 +38,9 @@ class SettingsPage extends StatelessWidget {
     required this.pendingChangesSyncing,
     required this.pendingChangesSyncError,
     required this.lastPendingChangesSync,
+    required this.syncStatus,
+    required this.integrationHealth,
+    required this.onRefreshEverything,
     required this.onSyncPendingChanges,
     required this.onExportPendingChanges,
     required this.auditEntries,
@@ -69,6 +73,9 @@ class SettingsPage extends StatelessWidget {
   final bool pendingChangesSyncing;
   final String? pendingChangesSyncError;
   final DateTime? lastPendingChangesSync;
+  final CrmSyncStatus syncStatus;
+  final List<IntegrationHealth> integrationHealth;
+  final Future<void> Function() onRefreshEverything;
   final Future<void> Function() onSyncPendingChanges;
   final Future<void> Function() onExportPendingChanges;
   final List<AuditEntry> auditEntries;
@@ -85,137 +92,167 @@ class SettingsPage extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text('Подключение данных', style: text.titleLarge),
-            const Spacer(),
-            DropdownButton<String>(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final userPicker = DropdownButton<String>(
+              isExpanded: constraints.maxWidth < 600,
               value: currentUserId,
               items: userProfiles
                   .where((profile) => profile.active)
                   .map(
                     (profile) => DropdownMenuItem(
                       value: profile.id,
-                      child: Text('${profile.name} · ${profile.role}'),
+                      child: Text(
+                        '${profile.name} · ${profile.role}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   )
                   .toList(),
               onChanged: (_) => onSwitchUser(),
-            ),
-            const SizedBox(width: 4),
-            IconButton(
+            );
+            final logout = IconButton(
               tooltip: 'Выйти из аккаунта',
               onPressed: () => unawaited(onLogout()),
               icon: const Icon(Icons.logout_outlined),
-            ),
-          ],
+            );
+            if (constraints.maxWidth < 600) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Подключение данных', style: text.titleLarge),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(child: userPicker),
+                      logout,
+                    ],
+                  ),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Text('Подключение данных', style: text.titleLarge),
+                const Spacer(),
+                userPicker,
+                const SizedBox(width: 4),
+                logout,
+              ],
+            );
+          },
         ),
         Text(
           'Схема Google Sheets v${SheetsSchema.version}',
           style: TextStyle(color: muted, fontSize: 12),
         ),
+        const SizedBox(height: 20),
+        _healthCenter(context, muted),
         const SizedBox(height: 8),
         Text(
           'Укажите ссылку на Google Таблицу с бухгалтерией. Для рабочего режима используйте защищённый доступ через backend; публичная публикация подходит только для временного чтения.',
           style: TextStyle(color: muted, fontSize: 13),
         ),
         const SizedBox(height: 20),
-        Container(
-          width: 700,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: scheme.outlineVariant),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Ссылка на Google Таблицу', style: text.titleSmall),
-              const SizedBox(height: 10),
-              TextField(
-                controller: sheetController,
-                enabled: canManageIntegrations,
-                decoration: const InputDecoration(
-                  hintText: 'https://docs.google.com/spreadsheets/d/...',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.link),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 700),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: scheme.outlineVariant),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Ссылка на Google Таблицу', style: text.titleSmall),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: sheetController,
+                  enabled: canManageIntegrations,
+                  decoration: const InputDecoration(
+                    hintText: 'https://docs.google.com/spreadsheets/d/...',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.link),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 14),
-              ElevatedButton.icon(
-                onPressed: canManageIntegrations
-                    ? () => unawaited(onSaveAndCheckSheet())
-                    : null,
-                icon: const Icon(Icons.save),
-                label: const Text('Сохранить и проверить'),
-              ),
-              const SizedBox(height: 12),
-              _actionButton(
-                label: 'Список доступных услуг',
-                icon: Icons.home_repair_service,
-                enabled: canManageIntegrations,
-                onPressed: onManageServices,
-              ),
-              _actionButton(
-                label: 'Создать резервную копию',
-                icon: Icons.backup_outlined,
-                enabled: canBackup,
-                onPressed: onBackup,
-              ),
-              _actionButton(
-                label: 'Восстановить последнюю копию',
-                icon: Icons.restore,
-                enabled: canRestore,
-                onPressed: onRestore,
-              ),
-              _actionButton(
-                label: 'Шаблоны быстрых ответов',
-                icon: Icons.flash_on_outlined,
-                enabled: canEditMessages,
-                onPressed: onManageQuickReplies,
-              ),
-              _actionButton(
-                label: hasSyncCredentials
-                    ? 'Изменить защищённую синхронизацию'
-                    : 'Настроить защищённую синхронизацию',
-                icon: Icons.sync_lock,
-                enabled: canManageIntegrations,
-                onPressed: onSetupSync,
-              ),
-              _actionButton(
-                label: aiConfigured
-                    ? 'Настроить AI и тест-бот'
-                    : 'Подключить AI для тест-бота',
-                icon: Icons.smart_toy_outlined,
-                enabled: canManageIntegrations && onSetupAi != null,
-                onPressed: onSetupAi ?? () async {},
-              ),
-              _actionButton(
-                label: 'Профили пользователей и роли',
-                icon: Icons.manage_accounts_outlined,
-                enabled: isOwner,
-                onPressed: onManageUsers,
-              ),
-              _actionButton(
-                label: 'Перенести ключи в общий CRM-сервер',
-                icon: Icons.security_outlined,
-                enabled: canManageIntegrations,
-                onPressed: onMigrateConfiguration,
-              ),
-              _actionButton(
-                label: 'Выгрузить все данные CRM',
-                icon: Icons.cloud_upload_outlined,
-                enabled: isOwner && hasSyncCredentials,
-                onPressed: onFullSync,
-              ),
-            ],
+                const SizedBox(height: 14),
+                ElevatedButton.icon(
+                  onPressed: canManageIntegrations
+                      ? () => unawaited(onSaveAndCheckSheet())
+                      : null,
+                  icon: const Icon(Icons.save),
+                  label: const Text('Сохранить и проверить'),
+                ),
+                const SizedBox(height: 12),
+                _actionButton(
+                  label: 'Список доступных услуг',
+                  icon: Icons.home_repair_service,
+                  enabled: canManageIntegrations,
+                  onPressed: onManageServices,
+                ),
+                _actionButton(
+                  label: 'Создать резервную копию',
+                  icon: Icons.backup_outlined,
+                  enabled: canBackup,
+                  onPressed: onBackup,
+                ),
+                _actionButton(
+                  label: 'Восстановить последнюю копию',
+                  icon: Icons.restore,
+                  enabled: canRestore,
+                  onPressed: onRestore,
+                ),
+                _actionButton(
+                  label: 'Шаблоны быстрых ответов',
+                  icon: Icons.flash_on_outlined,
+                  enabled: canEditMessages,
+                  onPressed: onManageQuickReplies,
+                ),
+                _actionButton(
+                  label: hasSyncCredentials
+                      ? 'Изменить защищённую синхронизацию'
+                      : 'Настроить защищённую синхронизацию',
+                  icon: Icons.sync_lock,
+                  enabled: canManageIntegrations,
+                  onPressed: onSetupSync,
+                ),
+                _actionButton(
+                  label: aiConfigured
+                      ? 'Настроить AI и тест-бот'
+                      : 'Подключить AI для тест-бота',
+                  icon: Icons.smart_toy_outlined,
+                  enabled: canManageIntegrations && onSetupAi != null,
+                  onPressed: onSetupAi ?? () async {},
+                ),
+                _actionButton(
+                  label: 'Профили пользователей и роли',
+                  icon: Icons.manage_accounts_outlined,
+                  enabled: isOwner,
+                  onPressed: onManageUsers,
+                ),
+                _actionButton(
+                  label: 'Перенести ключи в общий CRM-сервер',
+                  icon: Icons.security_outlined,
+                  enabled: canManageIntegrations,
+                  onPressed: onMigrateConfiguration,
+                ),
+                _actionButton(
+                  label: 'Выгрузить все данные CRM',
+                  icon: Icons.cloud_upload_outlined,
+                  enabled: isOwner && hasSyncCredentials,
+                  onPressed: onFullSync,
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 24),
         Text('Журнал действий', style: text.titleLarge),
         const SizedBox(height: 8),
-        if (pendingChangesCount > 0) _syncStatus(context, muted),
+        _syncStatus(context, muted),
         if (auditEntries.isEmpty)
           Text('Действий пока нет', style: TextStyle(color: muted)),
         ...auditEntries.reversed
@@ -248,6 +285,93 @@ class SettingsPage extends StatelessWidget {
     ),
   );
 
+  Widget _healthCenter(BuildContext context, Color muted) {
+    final scheme = Theme.of(context).colorScheme;
+    final state = syncStatus.state;
+    final stateText = switch (state) {
+      CrmHealthState.connected => 'Данные синхронизированы',
+      CrmHealthState.pending => 'Есть изменения для синхронизации',
+      CrmHealthState.offline => 'Офлайн: используется кэш',
+      CrmHealthState.error => 'Требуется действие',
+      CrmHealthState.notConfigured => 'Сервер не настроен',
+    };
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 700),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  IntegrationHealth(name: '', state: state, detail: '').icon,
+                  color: IntegrationHealth(
+                    name: '',
+                    state: state,
+                    detail: '',
+                  ).color(context),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Состояние CRM: $stateText')),
+                IconButton(
+                  tooltip: 'Обновить всё',
+                  onPressed: () => unawaited(onRefreshEverything()),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            if (syncStatus.lastSuccessfulSync != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Последнее обновление: ${_formatDateTime(syncStatus.lastSuccessfulSync!)}',
+                  style: TextStyle(color: muted, fontSize: 12),
+                ),
+              ),
+            if (syncStatus.error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  syncStatus.error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ),
+            const Divider(height: 24),
+            ...integrationHealth.map(
+              (integration) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      integration.icon,
+                      size: 19,
+                      color: integration.color(context),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${integration.name}: ${integration.detail}',
+                        style: TextStyle(color: muted, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _syncStatus(BuildContext context, Color muted) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Row(
@@ -269,7 +393,7 @@ class SettingsPage extends StatelessWidget {
                 )
               else if (lastPendingChangesSync != null)
                 Text(
-                  'Последняя синхронизация: ${lastPendingChangesSync!.toLocal()}',
+                  'Последняя синхронизация: ${_formatDateTime(lastPendingChangesSync!)}',
                   style: TextStyle(color: muted, fontSize: 12),
                 ),
             ],
@@ -298,4 +422,13 @@ class SettingsPage extends StatelessWidget {
       ],
     ),
   );
+}
+
+String _formatDateTime(DateTime value) {
+  final local = value.toLocal();
+  final date =
+      '${local.day.toString().padLeft(2, '0')}.${local.month.toString().padLeft(2, '0')}.${local.year}';
+  final time =
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  return '$date, $time';
 }

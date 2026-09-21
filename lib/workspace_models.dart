@@ -3,22 +3,6 @@ import 'dart:convert';
 String stableWorkspaceId(String prefix) =>
     '$prefix-${DateTime.now().microsecondsSinceEpoch}';
 
-enum VehicleClass {
-  sedan('sedan', 'Седаны и малый класс'),
-  crossover('crossover', 'Кроссоверы'),
-  suv('suv', 'Внедорожники'),
-  van('van', 'Микроавтобусы и автобусы');
-
-  const VehicleClass(this.key, this.label);
-  final String key;
-  final String label;
-
-  static VehicleClass fromKey(String value) => VehicleClass.values.firstWhere(
-    (item) => item.key == value,
-    orElse: () => VehicleClass.sedan,
-  );
-}
-
 class ServiceCatalogItem {
   ServiceCatalogItem({
     required this.id,
@@ -27,16 +11,9 @@ class ServiceCatalogItem {
     this.category = 'Основные услуги',
     this.materialIds = const [],
     this.botInstructions = '',
-    Map<String, double>? prices,
     this.archived = false,
     this.updatedAt,
-  }) : prices = {
-         for (final vehicleClass in VehicleClass.values)
-           vehicleClass.key: (prices?[vehicleClass.key] ?? 0).clamp(
-             0,
-             double.infinity,
-           ),
-       };
+  });
 
   final String id;
   String name;
@@ -46,13 +23,8 @@ class ServiceCatalogItem {
 
   /// Service-specific facts/rules injected into the bot knowledge base.
   String botInstructions;
-  Map<String, double> prices;
   bool archived;
   String? updatedAt;
-
-  double priceFor(VehicleClass vehicleClass) => prices[vehicleClass.key] ?? 0;
-
-  bool get hasAnyPrice => prices.values.any((value) => value > 0);
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -61,23 +33,11 @@ class ServiceCatalogItem {
     'category': category,
     'materialIds': materialIds,
     'botInstructions': botInstructions,
-    'prices': prices,
     'archived': archived,
     'updatedAt': updatedAt,
   };
 
   factory ServiceCatalogItem.fromJson(Map<String, dynamic> json) {
-    final rawPrices = json['prices'];
-    final prices = rawPrices is Map
-        ? rawPrices.map(
-            (key, value) => MapEntry(
-              key.toString(),
-              (value as num?)?.toDouble() ??
-                  double.tryParse(value.toString().replaceAll(',', '.')) ??
-                  0,
-            ),
-          )
-        : <String, double>{};
     return ServiceCatalogItem(
       id: json['id']?.toString() ?? stableWorkspaceId('service'),
       name: json['name']?.toString() ?? '',
@@ -87,7 +47,6 @@ class ServiceCatalogItem {
           .map((item) => item.toString())
           .toList(),
       botInstructions: json['botInstructions']?.toString() ?? '',
-      prices: prices,
       archived: json['archived'] == true,
       updatedAt: json['updatedAt']?.toString(),
     );

@@ -62,9 +62,29 @@ jobs:
           path: dist/CRM-macos.zip
           if-no-files-found: error
 
+  build-ios-simulator:
+    name: iOS Simulator
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: flutter build ios --simulator --build-name "${{ env.BUILD_NAME }}" --build-number "${{ env.BUILD_NUMBER }}" --dart-define=CRM_SERVER_URL="${{ secrets.CRM_SERVER_URL }}"
+      - name: Упаковать iOS Simulator
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "build/ios/iphonesimulator/Runner.app" dist/CRM-ios-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CRM-ios-simulator
+          path: dist/CRM-ios-simulator.zip
+          if-no-files-found: error
+
   publish:
     name: Опубликовать выпуск
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-ios-simulator]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

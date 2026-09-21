@@ -12,6 +12,7 @@ import 'package:crm/navigation.dart';
 import 'package:crm/finance.dart';
 import 'package:crm/calendar_logic.dart';
 import 'package:crm/sync_queue.dart';
+import 'package:crm/sync_status.dart';
 import 'package:crm/deal_logic.dart';
 import 'package:crm/client_logic.dart';
 import 'package:crm/widgets/unified_inbox.dart';
@@ -1611,10 +1612,8 @@ void main() {
       final catalog = ServiceCatalogItem(
         id: 'service-1',
         name: 'Полировка',
-        prices: {'crossover': 12000},
         materialIds: const ['stock-1'],
       );
-      expect(catalog.priceFor(VehicleClass.crossover), 12000);
       catalog.botInstructions = 'Уточнить состояние кузова';
       final restored = ServiceCatalogItem.fromJson(catalog.toJson());
       expect(restored.botInstructions, contains('Уточнить'));
@@ -1641,6 +1640,51 @@ void main() {
       expect(queue.invalidTransportItems, isEmpty);
     },
   );
+
+  test('notes and revenue plans use independently authorised sync scopes', () {
+    final notesPayload = buildSyncPayload(
+      'Заметки',
+      clients: const [],
+      stockItems: const [],
+      stockMovements: const [],
+      manualDeals: const [],
+      businessTransactions: const [],
+      closedPeriods: const [],
+      stickyNotes: const [
+        {'id': 'note-1', 'text': 'Перезвонить клиенту'},
+      ],
+    );
+    final planPayload = buildSyncPayload(
+      'План выручки',
+      clients: const [],
+      stockItems: const [],
+      stockMovements: const [],
+      manualDeals: const [],
+      businessTransactions: const [],
+      closedPeriods: const [],
+      revenuePlans: const [
+        {'id': 'plan-1', 'title': 'Сентябрь', 'target': 500000},
+      ],
+    );
+
+    expect(notesPayload['scope'], 'dashboardNotes');
+    expect((notesPayload['notes'] as List).single['id'], 'note-1');
+    expect(planPayload['scope'], 'revenuePlans');
+    expect((planPayload['revenuePlans'] as List).single['id'], 'plan-1');
+
+    final queue = SyncQueue()
+      ..enqueue(
+        entity: 'Заметки',
+        details: 'Создана заметка',
+        payload: notesPayload,
+      )
+      ..enqueue(
+        entity: 'План выручки',
+        details: 'Создан план выручки',
+        payload: planPayload,
+      );
+    expect(queue.invalidTransportItems, isEmpty);
+  });
 
   test('safe mock bot refuses unknown facts and cites a known rule', () async {
     const provider = KnowledgeBaseMockProvider();
@@ -2038,69 +2082,51 @@ https://crm.example.com/sync?syncToken=query-secret''';
     expect(queue.items.single.payload['scope'], 'manualDeals');
   });
 
-  testWidgets('CRM launches with dashboard', (tester) async {
+  testWidgets('CRM requires server login before opening workspace', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({'onboarding_completed': true});
     await tester.pumpWidget(const CleanPlaceApp());
-    expect(find.text('Сводка по работе детейлинг-центра'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('Чистое место CRM'), findsOneWidget);
+    expect(find.text('Сводка по работе детейлинг-центра'), findsNothing);
   });
 
-  testWidgets('key CRM sections render on a desktop window', (tester) async {
+  testWidgets('desktop CRM does not reveal sections before login', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1440, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     SharedPreferences.setMockInitialValues({'onboarding_completed': true});
     await tester.pumpWidget(const CleanPlaceApp());
 
-    Future<void> open(String navigationTitle) async {
-      await tester.tap(find.text(navigationTitle).first);
-      await tester.pump();
-    }
-
-    await open('CRM');
-    expect(find.text('Клиенты и автомобили'), findsOneWidget);
-    await open('Сделки');
-    expect(find.text('Сделки'), findsWidgets);
-    await open('Записи');
-    expect(find.text('Подключите Google Календарь'), findsOneWidget);
-    await open('Бухгалтерия');
-    expect(find.text('Бухгалтерия'), findsWidgets);
-    await open('Склад');
-    expect(find.text('Склад'), findsWidgets);
-    await open('Настройки');
-    expect(find.text('Настройки'), findsWidgets);
-    await open('Сообщения');
-    expect(find.text('Сообщения'), findsWidgets);
-    expect(find.text('Avito: сообщения и звонки'), findsOneWidget);
-    expect(find.text('Avito'), findsNothing);
-    expect(find.text('Avito • аккаунт 1'), findsNothing);
+    await tester.pump();
+    expect(find.text('Чистое место CRM'), findsOneWidget);
+    expect(find.text('Клиенты и автомобили'), findsNothing);
   });
 
-  testWidgets('CRM opens from compact navigation without layout errors', (
+  testWidgets('compact CRM keeps the login screen before authentication', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({'onboarding_completed': true});
     await tester.binding.setSurfaceSize(const Size(900, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const CleanPlaceApp());
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Разделы'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('CRM').last);
-    await tester.pumpAndSettle();
-    expect(find.text('Клиенты и автомобили'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('Чистое место CRM'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('messages stay usable in a compact CRM window', (tester) async {
+  testWidgets('compact CRM hides messages before authentication', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(900, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     SharedPreferences.setMockInitialValues({'onboarding_completed': true});
     await tester.pumpWidget(const CleanPlaceApp());
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Разделы'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Сообщения').last);
-    await tester.pumpAndSettle();
-    expect(find.text('Avito: сообщения и звонки'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('Чистое место CRM'), findsOneWidget);
+    expect(find.text('Avito: сообщения и звонки'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -2703,7 +2729,7 @@ https://crm.example.com/sync?syncToken=query-secret''';
     expect(loggedOut, isTrue);
   });
 
-  testWidgets('dashboard shell opens navigation drawer on a compact window', (
+  testWidgets('dashboard shell hides the duplicate compact menu button', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(800, 600));
@@ -2722,11 +2748,59 @@ https://crm.example.com/sync?syncToken=query-secret''';
         ),
       ),
     );
-    expect(find.byTooltip('Разделы'), findsOneWidget);
-    await tester.tap(find.byTooltip('Разделы'));
-    await tester.pumpAndSettle();
-    expect(find.text('Навигация CRM'), findsOneWidget);
+    expect(find.byTooltip('Разделы'), findsNothing);
+    expect(find.text('CRM'), findsOneWidget);
   });
+
+  testWidgets(
+    'dashboard shell provides mobile navigation for primary sections',
+    (tester) async {
+      var selectedPage = 0;
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DashboardShell(
+            darkMode: false,
+            sidebar: const Text('Навигация CRM'),
+            title: 'Дашборд',
+            now: DateTime(2026, 9, 16, 12),
+            hasUnreadNotifications: false,
+            onOpenNotifications: () {},
+            onThemeChanged: (_) {},
+            selectedPage: selectedPage,
+            mobileDestinations: const [
+              DashboardMobileDestination(
+                pageIndex: 0,
+                label: 'Дашборд',
+                icon: Icons.dashboard_outlined,
+              ),
+              DashboardMobileDestination(
+                pageIndex: 1,
+                label: 'CRM',
+                icon: Icons.people_outline,
+              ),
+            ],
+            onPageSelected: (page) => selectedPage = page,
+            body: const Text('Рабочая область'),
+          ),
+        ),
+      );
+      final mobileNavigation = find.byType(NavigationBar);
+      expect(mobileNavigation, findsOneWidget);
+      expect(
+        find.descendant(of: mobileNavigation, matching: find.text('Дашборд')),
+        findsOneWidget,
+      );
+      final crmDestination = find.descendant(
+        of: mobileNavigation,
+        matching: find.text('CRM'),
+      );
+      expect(crmDestination, findsOneWidget);
+      await tester.tap(crmDestination);
+      expect(selectedPage, 1);
+    },
+  );
 
   testWidgets('overview dashboard shows metrics and preserves quick action', (
     tester,
@@ -2755,15 +2829,57 @@ https://crm.example.com/sync?syncToken=query-secret''';
             borderColor: Colors.orange,
             mainTextColor: Colors.black,
             mutedTextColor: Colors.grey,
-            financialSummary: const Text('Финансовый итог'),
           ),
         ),
       ),
     );
     expect(find.text('Загружено заказов: 2'), findsOneWidget);
-    expect(find.text('Финансовый итог'), findsOneWidget);
     await tester.tap(find.text('3 000 ₽'));
     expect(openedBusinessAccount, isTrue);
+  });
+
+  testWidgets('overview dashboard uses compact two-column cards on iPhone', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: OverviewDashboard(
+              metrics: const [
+                OverviewMetric(
+                  title: 'Выручка',
+                  value: '0 Р',
+                  icon: Icons.payments_outlined,
+                ),
+                OverviewMetric(
+                  title: 'Расходы',
+                  value: '0 Р',
+                  icon: Icons.receipt_long_outlined,
+                ),
+              ],
+              loadedDeals: 0,
+              loading: false,
+              surfaceColor: Colors.white,
+              borderColor: Colors.orange,
+              mainTextColor: Colors.black,
+              mutedTextColor: Colors.grey,
+            ),
+          ),
+        ),
+      ),
+    );
+    final cards = find.byType(DashboardStatCard);
+    expect(cards, findsNWidgets(2));
+    final firstCard = tester.getSize(cards.first);
+    expect(firstCard.width, closeTo(191, 1));
+    expect(firstCard.height, lessThan(100));
+    expect(
+      tester.getTopLeft(cards.at(1)).dx,
+      greaterThan(tester.getTopLeft(cards.first).dx),
+    );
   });
 
   testWidgets('notification center renders levels and clears notifications', (
@@ -2905,6 +3021,21 @@ https://crm.example.com/sync?syncToken=query-secret''';
               pendingChangesSyncing: false,
               pendingChangesSyncError: null,
               lastPendingChangesSync: DateTime(2026, 8, 31, 12),
+              syncStatus: CrmSyncStatus(
+                serverConnected: true,
+                sheetsOffline: false,
+                syncing: false,
+                pendingChanges: 2,
+                lastSuccessfulSync: DateTime(2026, 8, 31, 12),
+              ),
+              integrationHealth: const [
+                IntegrationHealth(
+                  name: 'Google Sheets',
+                  state: CrmHealthState.connected,
+                  detail: 'Подключена',
+                ),
+              ],
+              onRefreshEverything: () async {},
               onSyncPendingChanges: () async => synced = true,
               onExportPendingChanges: () async {},
               auditEntries: [

@@ -57,8 +57,9 @@ class CrmUser {
 }
 
 class CrmAuthException implements Exception {
-  const CrmAuthException(this.message);
+  const CrmAuthException(this.message, {this.code});
   final String message;
+  final String? code;
 
   @override
   String toString() => message;
@@ -104,7 +105,9 @@ class CrmAuthService {
     }
     final result = Map<String, dynamic>.from(decoded);
     final error = result['error']?.toString().trim() ?? '';
-    if (error.isNotEmpty) throw CrmAuthException(error);
+    if (error.isNotEmpty) {
+      throw CrmAuthException(error, code: result['errorCode']?.toString());
+    }
     return result;
   }
 

@@ -7,12 +7,14 @@ class OverviewMetric {
     required this.title,
     required this.value,
     required this.icon,
+    this.accentColor = const Color(0xFFF28C28),
     this.onTap,
   });
 
   final String title;
   final String value;
   final IconData icon;
+  final Color accentColor;
   final VoidCallback? onTap;
 }
 
@@ -28,9 +30,6 @@ class OverviewDashboard extends StatelessWidget {
     required this.borderColor,
     required this.mainTextColor,
     required this.mutedTextColor,
-    this.financialSummary,
-    this.reconciliationReport,
-    this.performanceReport,
     this.workspace,
   });
 
@@ -41,9 +40,6 @@ class OverviewDashboard extends StatelessWidget {
   final Color borderColor;
   final Color mainTextColor;
   final Color mutedTextColor;
-  final Widget? financialSummary;
-  final Widget? reconciliationReport;
-  final Widget? performanceReport;
   final Widget? workspace;
 
   @override
@@ -54,71 +50,86 @@ class OverviewDashboard extends StatelessWidget {
         'Сводка по работе детейлинг-центра',
         style: TextStyle(color: mutedTextColor, fontSize: 14),
       ),
-      const SizedBox(height: 24),
-      Wrap(
-        spacing: 14,
-        runSpacing: 14,
-        children: metrics
-            .map(
-              (metric) => DashboardStatCard(
-                title: metric.title,
-                value: metric.value,
-                icon: metric.icon,
-                surfaceColor: surfaceColor,
-                borderColor: borderColor,
-                mainTextColor: mainTextColor,
-                mutedTextColor: mutedTextColor,
-                onTap: metric.onTap,
-              ),
-            )
-            .toList(growable: false),
+      const SizedBox(height: 16),
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 600;
+          final cards = metrics
+              .map(
+                (metric) => DashboardStatCard(
+                  title: metric.title,
+                  value: metric.value,
+                  icon: metric.icon,
+                  surfaceColor: surfaceColor,
+                  borderColor: borderColor,
+                  mainTextColor: mainTextColor,
+                  mutedTextColor: mutedTextColor,
+                  accentColor: metric.accentColor,
+                  onTap: metric.onTap,
+                ),
+              )
+              .toList(growable: false);
+          if (!compact) {
+            return Wrap(spacing: 14, runSpacing: 14, children: cards);
+          }
+          final cardWidth = (constraints.maxWidth - 8) / 2;
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: cards
+                .map((card) => SizedBox(width: cardWidth, child: card))
+                .toList(growable: false),
+          );
+        },
       ),
       if (workspace != null)
-        Padding(padding: const EdgeInsets.only(top: 24), child: workspace!),
-      const SizedBox(height: 24),
+        Padding(padding: const EdgeInsets.only(top: 18), child: workspace!),
+      const SizedBox(height: 18),
       Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: surfaceColor,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(color: borderColor),
         ),
-        child: Row(
-          children: [
-            const Icon(Icons.analytics_outlined, color: Color(0xFFF28C28)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Загружено заказов: $loadedDeals',
-                style: TextStyle(
-                  color: mainTextColor,
-                  fontWeight: FontWeight.w600,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 420;
+            final leading = Row(
+              children: [
+                const Icon(Icons.analytics_outlined, color: Color(0xFFF28C28)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Загружено заказов: $loadedDeals',
+                    style: TextStyle(
+                      color: mainTextColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            Text(
+              ],
+            );
+            final source = Text(
               'Обновлено из листа «Август»',
               style: TextStyle(color: mutedTextColor, fontSize: 12),
-            ),
-          ],
+            );
+            return compact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [leading, const SizedBox(height: 8), source],
+                  )
+                : Row(
+                    children: [
+                      Expanded(child: leading),
+                      const SizedBox(width: 12),
+                      source,
+                    ],
+                  );
+          },
         ),
       ),
-      if (!loading && financialSummary != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 24),
-          child: financialSummary!,
-        ),
-      if (!loading && reconciliationReport != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: reconciliationReport!,
-        ),
-      if (!loading && performanceReport != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: performanceReport!,
-        ),
     ],
   );
 }

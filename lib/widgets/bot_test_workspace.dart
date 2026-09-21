@@ -62,95 +62,157 @@ class _BotTestWorkspaceState extends State<BotTestWorkspace> {
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFB7BDC7)
         : const Color(0xFF626975);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 260,
-          child: Column(
+    final conversation = selected == null
+        ? Center(
+            child: Text(
+              'Создайте тестовый диалог',
+              style: TextStyle(color: muted),
+            ),
+          )
+        : _ConversationPanel(
+            conversation: selected,
+            controller: _message,
+            busy: widget.busy,
+            muted: muted,
+            onRename: () => widget.onRenameConversation(selected),
+            onDelete: () => widget.onDeleteConversation(selected),
+            onClear: () => widget.onClearConversation(selected),
+            onSend: () async {
+              final text = _message.text.trim();
+              if (text.isEmpty) return;
+              _message.clear();
+              await widget.onSend(text);
+            },
+            onMarkGood: widget.onMarkGood,
+            onMarkBad: widget.onMarkBad,
+            onRetryReply: widget.onRetryReply,
+          );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 680;
+        final sidebar = _Sidebar(
+          compact: compact,
+          conversations: widget.conversations,
+          selected: selected,
+          aiConfigured: widget.aiConfigured,
+          muted: muted,
+          onCreateConversation: widget.onCreateConversation,
+          onEditKnowledgeBase: widget.onEditKnowledgeBase,
+          onAnalyzeAvito: widget.onAnalyzeAvito,
+          onSelectConversation: widget.onSelectConversation,
+        );
+        if (compact) {
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              FilledButton.icon(
-                onPressed: widget.onCreateConversation,
-                icon: const Icon(Icons.add),
-                label: const Text('Новый диалог'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: widget.onEditKnowledgeBase,
-                icon: const Icon(Icons.menu_book_outlined),
-                label: const Text('База знаний'),
-              ),
-              const SizedBox(height: 6),
-              OutlinedButton.icon(
-                onPressed: widget.onAnalyzeAvito,
-                icon: const Icon(Icons.auto_awesome_outlined),
-                label: const Text('Анализ Avito'),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Тестовые диалоги',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              ...widget.conversations.map(
-                (conversation) => ListTile(
-                  selected: conversation.id == selected?.id,
-                  selectedTileColor: const Color(0x22F28C28),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  title: Text(
-                    conversation.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text('${conversation.messages.length} сообщений'),
-                  onTap: () => widget.onSelectConversation(conversation.id),
-                ),
-              ),
-              if (!widget.aiConfigured)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(
-                    'Работает безопасный mock-режим: бот отвечает только по базе знаний.',
-                    style: TextStyle(color: muted, fontSize: 12),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 24),
-        Expanded(
-          child: selected == null
-              ? Center(
-                  child: Text(
-                    'Создайте тестовый диалог',
-                    style: TextStyle(color: muted),
-                  ),
-                )
-              : _ConversationPanel(
-                  conversation: selected,
-                  controller: _message,
-                  busy: widget.busy,
-                  muted: muted,
-                  onRename: () => widget.onRenameConversation(selected),
-                  onDelete: () => widget.onDeleteConversation(selected),
-                  onClear: () => widget.onClearConversation(selected),
-                  onSend: () async {
-                    final text = _message.text.trim();
-                    if (text.isEmpty) return;
-                    _message.clear();
-                    await widget.onSend(text);
-                  },
-                  onMarkGood: widget.onMarkGood,
-                  onMarkBad: widget.onMarkBad,
-                  onRetryReply: widget.onRetryReply,
-                ),
-        ),
-      ],
+            children: [sidebar, const SizedBox(height: 18), conversation],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 260, child: sidebar),
+            const SizedBox(width: 24),
+            Expanded(child: conversation),
+          ],
+        );
+      },
     );
   }
+}
+
+class _Sidebar extends StatelessWidget {
+  const _Sidebar({
+    required this.compact,
+    required this.conversations,
+    required this.selected,
+    required this.aiConfigured,
+    required this.muted,
+    required this.onCreateConversation,
+    required this.onEditKnowledgeBase,
+    required this.onAnalyzeAvito,
+    required this.onSelectConversation,
+  });
+
+  final bool compact;
+  final List<BotConversation> conversations;
+  final BotConversation? selected;
+  final bool aiConfigured;
+  final Color muted;
+  final VoidCallback onCreateConversation;
+  final VoidCallback onEditKnowledgeBase;
+  final VoidCallback onAnalyzeAvito;
+  final ValueChanged<String> onSelectConversation;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      FilledButton.icon(
+        onPressed: onCreateConversation,
+        icon: const Icon(Icons.add),
+        label: const Text('Новый диалог'),
+      ),
+      const SizedBox(height: 8),
+      if (compact)
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: onEditKnowledgeBase,
+                icon: const Icon(Icons.menu_book_outlined, size: 18),
+                label: const Text('База знаний'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: onAnalyzeAvito,
+                icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                label: const Text('Анализ Avito'),
+              ),
+            ),
+          ],
+        )
+      else ...[
+        OutlinedButton.icon(
+          onPressed: onEditKnowledgeBase,
+          icon: const Icon(Icons.menu_book_outlined),
+          label: const Text('База знаний'),
+        ),
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          onPressed: onAnalyzeAvito,
+          icon: const Icon(Icons.auto_awesome_outlined),
+          label: const Text('Анализ Avito'),
+        ),
+      ],
+      SizedBox(height: compact ? 12 : 18),
+      Text('Тестовые диалоги', style: Theme.of(context).textTheme.titleSmall),
+      const SizedBox(height: 8),
+      ...conversations.map(
+        (conversation) => ListTile(
+          selected: conversation.id == selected?.id,
+          selectedTileColor: const Color(0x22F28C28),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          title: Text(
+            conversation.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text('${conversation.messages.length} сообщений'),
+          onTap: () => onSelectConversation(conversation.id),
+        ),
+      ),
+      if (!aiConfigured)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'Работает безопасный mock-режим: бот отвечает только по базе знаний.',
+            style: TextStyle(color: muted, fontSize: 12),
+          ),
+        ),
+    ],
+  );
 }
 
 class _ConversationPanel extends StatelessWidget {
@@ -180,108 +242,130 @@ class _ConversationPanel extends StatelessWidget {
   final Future<void> Function(BotMessage) onRetryReply;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              conversation.title,
-              style: Theme.of(context).textTheme.titleLarge,
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 680;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                conversation.title,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
             ),
-          ),
-          IconButton(
-            tooltip: 'Переименовать',
-            onPressed: onRename,
-            icon: const Icon(Icons.edit_outlined),
-          ),
-          IconButton(
-            tooltip: 'Очистить контекст',
-            onPressed: onClear,
-            icon: const Icon(Icons.cleaning_services_outlined),
-          ),
-          IconButton(
-            tooltip: 'Удалить диалог',
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline),
-          ),
-        ],
-      ),
-      const SizedBox(height: 8),
-      Text(
-        'Тестовый режим: ответы никогда не отправляются клиенту автоматически.',
-        style: TextStyle(color: muted),
-      ),
-      const SizedBox(height: 6),
-      Tooltip(
-        message:
-            'Отправка доступна только из реального диалога после проверки сотрудником',
-        child: OutlinedButton.icon(
-          onPressed: null,
-          icon: const Icon(Icons.send_outlined, size: 16),
-          label: const Text('Отправить клиенту (недоступно в тесте)'),
+            IconButton(
+              tooltip: 'Переименовать',
+              onPressed: onRename,
+              icon: const Icon(Icons.edit_outlined),
+            ),
+            IconButton(
+              tooltip: 'Очистить контекст',
+              onPressed: onClear,
+              icon: const Icon(Icons.cleaning_services_outlined),
+            ),
+            IconButton(
+              tooltip: 'Удалить диалог',
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
         ),
-      ),
-      const SizedBox(height: 14),
-      Container(
-        height: 410,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(color: Theme.of(context).dividerColor),
-          borderRadius: BorderRadius.circular(14),
+        SizedBox(height: compact ? 6 : 8),
+        Text(
+          'Тестовый режим: ответы никогда не отправляются клиенту автоматически.',
+          style: TextStyle(color: muted),
         ),
-        child: conversation.messages.isEmpty
-            ? Center(
-                child: Text(
-                  'Напишите тестовое объявление или вопрос клиента.',
-                  style: TextStyle(color: muted),
+        SizedBox(height: compact ? 4 : 6),
+        Semantics(
+          label:
+              'Отправка клиенту недоступна в тесте: сначала ответ проверяет сотрудник',
+          child: Text(
+            'Отправка клиенту недоступна в тесте',
+            style: TextStyle(color: muted, fontSize: 12),
+          ),
+        ),
+        SizedBox(height: compact ? 8 : 10),
+        Container(
+          height: compact ? 112 : 410,
+          padding: EdgeInsets.all(compact ? 12 : 16),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: conversation.messages.isEmpty
+              ? Center(
+                  child: Text(
+                    'Напишите тестовое объявление или вопрос клиента.',
+                    style: TextStyle(color: muted),
+                  ),
+                )
+              : ListView(
+                  children: conversation.messages
+                      .map(
+                        (message) => _Bubble(
+                          message: message,
+                          onMarkGood: onMarkGood,
+                          onMarkBad: onMarkBad,
+                          onRetryReply: onRetryReply,
+                        ),
+                      )
+                      .toList(),
                 ),
-              )
-            : ListView(
-                children: conversation.messages
-                    .map(
-                      (message) => _Bubble(
-                        message: message,
-                        onMarkGood: onMarkGood,
-                        onMarkBad: onMarkBad,
-                        onRetryReply: onRetryReply,
-                      ),
-                    )
-                    .toList(),
-              ),
-      ),
-      const SizedBox(height: 14),
-      Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              minLines: 1,
-              maxLines: 4,
-              enabled: !busy,
-              onSubmitted: (_) => onSend(),
-              decoration: const InputDecoration(
-                labelText: 'Сообщение для теста',
-                hintText: 'Например: Сколько стоит полировка для кроссовера?',
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          FilledButton.icon(
-            onPressed: busy ? null : onSend,
-            icon: busy
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        SizedBox(height: compact ? 8 : 14),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 440;
+            final sendButton = compact
+                ? Tooltip(
+                    message: busy ? 'Бот формирует ответ' : 'Спросить',
+                    child: FilledButton(
+                      onPressed: busy ? null : onSend,
+                      child: busy
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send),
+                    ),
                   )
-                : const Icon(Icons.send),
-            label: Text(busy ? 'Думаю…' : 'Спросить'),
-          ),
-        ],
-      ),
-    ],
-  );
+                : FilledButton.icon(
+                    onPressed: busy ? null : onSend,
+                    icon: busy
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.send),
+                    label: Text(busy ? 'Думаю…' : 'Спросить'),
+                  );
+            return Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    minLines: 1,
+                    maxLines: 4,
+                    enabled: !busy,
+                    onSubmitted: (_) => onSend(),
+                    decoration: const InputDecoration(
+                      labelText: 'Сообщение для теста',
+                      hintText:
+                          'Например: Сколько стоит полировка для кроссовера?',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                sendButton,
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
 }
 
 class _Bubble extends StatelessWidget {
@@ -342,8 +426,9 @@ class _Bubble extends StatelessWidget {
             ],
             if (!isUser && !isEscalation) ...[
               const SizedBox(height: 6),
-              Row(
-                mainAxisSize: MainAxisSize.min,
+              Wrap(
+                spacing: 4,
+                runSpacing: 2,
                 children: [
                   TextButton.icon(
                     onPressed: () => onMarkGood(message),

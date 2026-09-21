@@ -57,6 +57,8 @@ class SyncQueue {
     'appointments',
     'serviceCatalog',
     'workspace',
+    'dashboardNotes',
+    'revenuePlans',
     'knowledgeBase',
     'auditOnly',
   };

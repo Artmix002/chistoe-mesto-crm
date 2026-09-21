@@ -24,7 +24,7 @@ class CrmSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    width: 220,
+    width: double.infinity,
     color: const Color(0xFF17191D),
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
     child: Column(

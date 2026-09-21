@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'offline_status_banner.dart';
-
 /// Экран финансовых данных. Бизнес-состояние передаёт dashboard, а этот
 /// компонент отвечает только за адаптивную компоновку и выбор фильтров.
 class AccountingPage extends StatelessWidget {
@@ -61,6 +59,10 @@ class AccountingPage extends StatelessWidget {
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFB2B8C2)
         : const Color(0xFF626975);
+    final showSheetError =
+        sheetError != null &&
+        !(sheetsOfflineMode &&
+            sheetError!.startsWith('Google Sheets недоступна'));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -79,91 +81,200 @@ class AccountingPage extends StatelessWidget {
               'Google Sheets недоступна. Показаны последние сохранённые финансовые данные; локальные операции не потеряны.',
             ),
           ),
-        Wrap(
-          spacing: 10,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            ElevatedButton.icon(
-              onPressed: loading ? null : () => onSync(),
-              icon: const Icon(Icons.sync),
-              label: const Text('Синхронизировать'),
-            ),
-            OutlinedButton.icon(
-              onPressed: canEditFinance ? () => onClosePeriod() : null,
-              icon: const Icon(Icons.lock_clock_outlined),
-              label: const Text('Закрыть период'),
-            ),
-            if (loading)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            OutlinedButton.icon(
-              onPressed: () async {
-                final picked = await showDateRangePicker(
-                  context: context,
-                  firstDate: DateTime(2020),
-                  lastDate: DateTime(2100),
-                  initialDateRange: from == null || to == null
-                      ? null
-                      : DateTimeRange(start: from!, end: to!),
-                );
-                if (picked != null) onPeriodChanged(picked);
-              },
-              icon: const Icon(Icons.date_range),
-              label: Text(
-                from == null
-                    ? 'Период'
-                    : '${from!.day}.${from!.month} – ${to!.day}.${to!.month}',
-              ),
-            ),
-            if (from != null)
-              TextButton(
-                onPressed: () => onPeriodChanged(null),
-                child: const Text('Сбросить'),
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            DropdownButton<String>(
-              value: categoryFilter,
-              items: [
-                const DropdownMenuItem(
-                  value: 'Все категории',
-                  child: Text('Все категории'),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 600;
+            Future<void> selectPeriod() async {
+              final picked = await showDateRangePicker(
+                context: context,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2100),
+                initialDateRange: from == null || to == null
+                    ? null
+                    : DateTimeRange(start: from!, end: to!),
+              );
+              if (picked != null) onPeriodChanged(picked);
+            }
+
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: loading ? null : () => onSync(),
+                    icon: loading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.sync),
+                    label: Text(
+                      loading ? 'Синхронизация…' : 'Синхронизировать',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: canEditFinance ? () => onClosePeriod() : null,
+                    icon: const Icon(Icons.lock_clock_outlined),
+                    label: const Text('Закрыть период'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(42),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: selectPeriod,
+                          icon: const Icon(Icons.date_range),
+                          label: Text(
+                            from == null
+                                ? 'Период'
+                                : '${from!.day}.${from!.month} – ${to!.day}.${to!.month}',
+                          ),
+                        ),
+                      ),
+                      if (from != null) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: 'Сбросить период',
+                          onPressed: () => onPeriodChanged(null),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: categoryFilter,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Категория',
+                            isDense: true,
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                              value: 'Все категории',
+                              child: Text('Все категории'),
+                            ),
+                            ...categories.map(
+                              (category) => DropdownMenuItem(
+                                value: category,
+                                child: Text(category),
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) =>
+                              onCategoryChanged(value ?? 'Все категории'),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Категории',
+                        onPressed: canEditFinance
+                            ? () => onManageCategories()
+                            : null,
+                        icon: const Icon(Icons.category_outlined),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: loading ? null : () => onSync(),
+                      icon: const Icon(Icons.sync),
+                      label: const Text('Синхронизировать'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: canEditFinance ? () => onClosePeriod() : null,
+                      icon: const Icon(Icons.lock_clock_outlined),
+                      label: const Text('Закрыть период'),
+                    ),
+                    if (loading)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                  ],
                 ),
-                ...categories.map(
-                  (category) =>
-                      DropdownMenuItem(value: category, child: Text(category)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: selectPeriod,
+                      icon: const Icon(Icons.date_range),
+                      label: Text(
+                        from == null
+                            ? 'Период'
+                            : '${from!.day}.${from!.month} – ${to!.day}.${to!.month}',
+                      ),
+                    ),
+                    if (from != null)
+                      TextButton(
+                        onPressed: () => onPeriodChanged(null),
+                        child: const Text('Сбросить'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    DropdownButton<String>(
+                      value: categoryFilter,
+                      items: [
+                        const DropdownMenuItem(
+                          value: 'Все категории',
+                          child: Text('Все категории'),
+                        ),
+                        ...categories.map(
+                          (category) => DropdownMenuItem(
+                            value: category,
+                            child: Text(category),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) =>
+                          onCategoryChanged(value ?? 'Все категории'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: canEditFinance
+                          ? () => onManageCategories()
+                          : null,
+                      icon: const Icon(Icons.category_outlined),
+                      label: const Text('Категории'),
+                    ),
+                  ],
                 ),
               ],
-              onChanged: (value) => onCategoryChanged(value ?? 'Все категории'),
-            ),
-            OutlinedButton.icon(
-              onPressed: canEditFinance ? () => onManageCategories() : null,
-              icon: const Icon(Icons.category_outlined),
-              label: const Text('Категории'),
-            ),
-          ],
+            );
+          },
         ),
         const SizedBox(height: 20),
-        if (sheetsOfflineMode) OfflineStatusBanner(lastSynced: lastSheetsSync),
-        if (sheetError != null)
+        if (showSheetError)
           Text(
             sheetError!,
             style: TextStyle(

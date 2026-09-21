@@ -39,9 +39,31 @@ class ClientResultsList extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     children: [
       if (totalCount == 0)
-        const Padding(
-          padding: EdgeInsets.all(30),
-          child: Center(child: Text('Клиентов пока нет')),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 42, horizontal: 24),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.people_outline,
+                  size: 34,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Клиентов пока нет',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Добавьте первого клиента, чтобы вести историю обращений.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
         ),
       ...clients.map(
         (client) => Card(

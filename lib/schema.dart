@@ -83,7 +83,6 @@ class SheetsSchema {
     'durationHours',
     'category',
     'materialIds',
-    'prices',
     'archived',
     'updatedAt',
   ];

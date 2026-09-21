@@ -43,7 +43,9 @@ class DashboardShell extends StatelessWidget {
         backgroundColor: darkMode
             ? const Color(0xFF101216)
             : const Color(0xFFF5F6F8),
-        drawer: compact ? Drawer(child: sidebar) : null,
+        drawer: compact
+            ? Drawer(width: 286, child: SafeArea(child: sidebar))
+            : null,
         bottomNavigationBar:
             compact && mobileDestinations.length >= 2 && onPageSelected != null
             ? _MobileNavigationBar(
@@ -55,30 +57,52 @@ class DashboardShell extends StatelessWidget {
             : null,
         body: Row(
           children: [
-            if (!compact) sidebar,
+            if (!compact) SizedBox(width: 220, child: sidebar),
             Expanded(
               child: Container(
                 color: darkMode
                     ? const Color(0xFF101216)
                     : const Color(0xFFF5F6F8),
-                child: Column(
-                  children: [
-                    _Header(
-                      compact: compact,
-                      darkMode: darkMode,
-                      title: title,
-                      now: now,
-                      hasUnreadNotifications: hasUnreadNotifications,
-                      onOpenNotifications: onOpenNotifications,
-                      onThemeChanged: onThemeChanged,
-                    ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: EdgeInsets.all(compact ? 16 : 32),
-                        child: body,
+                child: SafeArea(
+                  bottom: false,
+                  child: Column(
+                    children: [
+                      _Header(
+                        compact: compact,
+                        darkMode: darkMode,
+                        title: title,
+                        now: now,
+                        hasUnreadNotifications: hasUnreadNotifications,
+                        onOpenNotifications: onOpenNotifications,
+                        onThemeChanged: onThemeChanged,
                       ),
-                    ),
-                  ],
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: EdgeInsets.all(compact ? 16 : 32),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) =>
+                                FadeTransition(
+                                  opacity: animation,
+                                  child: SlideTransition(
+                                    position: Tween<Offset>(
+                                      begin: const Offset(0, .015),
+                                      end: Offset.zero,
+                                    ).animate(animation),
+                                    child: child,
+                                  ),
+                                ),
+                            child: KeyedSubtree(
+                              key: ValueKey(selectedPage),
+                              child: body,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -94,11 +118,13 @@ class DashboardMobileDestination {
     required this.pageIndex,
     required this.label,
     required this.icon,
+    this.isMore = false,
   });
 
   final int pageIndex;
   final String label;
   final IconData icon;
+  final bool isMore;
 }
 
 class _MobileNavigationBar extends StatelessWidget {
@@ -116,9 +142,14 @@ class _MobileNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedIndex = destinations.indexWhere(
+    var selectedIndex = destinations.indexWhere(
       (destination) => destination.pageIndex == selectedPage,
     );
+    if (selectedIndex < 0) {
+      selectedIndex = destinations.indexWhere(
+        (destination) => destination.isMore,
+      );
+    }
     return SafeArea(
       top: false,
       child: DecoratedBox(
@@ -133,22 +164,26 @@ class _MobileNavigationBar extends StatelessWidget {
           ),
         ),
         child: NavigationBar(
-          height: 68,
+          height: 72,
           backgroundColor: Colors.transparent,
           indicatorColor: const Color(0x33F28C28),
           selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          onDestinationSelected: (index) =>
-              onPageSelected(destinations[index].pageIndex),
-          destinations: destinations
-              .map(
-                (destination) => NavigationDestination(
-                  icon: Icon(destination.icon),
-                  selectedIcon: Icon(destination.icon),
-                  label: destination.label,
-                ),
-              )
-              .toList(),
+          onDestinationSelected: (index) {
+            final destination = destinations[index];
+            if (destination.isMore) {
+              Scaffold.of(context).openDrawer();
+              return;
+            }
+            onPageSelected(destination.pageIndex);
+          },
+          destinations: destinations.map((destination) {
+            return NavigationDestination(
+              icon: Icon(destination.icon, size: 23),
+              selectedIcon: Icon(destination.icon, size: 23),
+              label: destination.label,
+            );
+          }).toList(),
         ),
       ),
     );
@@ -176,7 +211,7 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    height: 72,
+    height: compact ? 64 : 72,
     padding: EdgeInsets.symmetric(horizontal: compact ? 16 : 32),
     decoration: BoxDecoration(
       color: darkMode ? const Color(0xFF1A1D23) : Colors.white,
@@ -186,95 +221,131 @@ class _Header extends StatelessWidget {
         ),
       ),
     ),
-    child: Row(
+    child: Stack(
+      alignment: Alignment.center,
       children: [
         if (compact)
-          Builder(
-            builder: (scaffoldContext) => IconButton(
-              tooltip: 'Разделы',
-              onPressed: () => Scaffold.of(scaffoldContext).openDrawer(),
-              icon: const Icon(Icons.menu),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 56),
+            child: Semantics(
+              header: true,
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: darkMode ? Colors.white : const Color(0xFF191B20),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
+              ),
             ),
-          ),
-        Expanded(
-          child: Semantics(
-            header: true,
-            child: Text(
-              title,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: darkMode ? Colors.white : const Color(0xFF191B20),
-                fontSize: compact ? 20 : 23,
-                fontWeight: FontWeight.w700,
+          )
+        else
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Semantics(
+              header: true,
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: darkMode ? Colors.white : const Color(0xFF191B20),
+                  fontSize: 23,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
-        ),
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            IconButton(
-              tooltip: 'Уведомления',
-              onPressed: onOpenNotifications,
-              icon: Icon(
-                Icons.notifications_none,
-                color: darkMode
-                    ? const Color(0xFFD7DAE0)
-                    : const Color(0xFF6E737C),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton(
+                    tooltip: 'Уведомления',
+                    onPressed: onOpenNotifications,
+                    icon: Icon(
+                      Icons.notifications_none,
+                      color: darkMode
+                          ? const Color(0xFFD7DAE0)
+                          : const Color(0xFF6E737C),
+                    ),
+                  ),
+                  if (hasUnreadNotifications)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFF28C28),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            ),
-            if (hasUnreadNotifications)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF28C28),
-                    shape: BoxShape.circle,
+              SizedBox(width: compact ? 2 : 8),
+              Tooltip(
+                message: darkMode
+                    ? 'Включить дневную тему'
+                    : 'Включить ночную тему',
+                child: Semantics(
+                  button: true,
+                  label: darkMode
+                      ? 'Включить дневную тему'
+                      : 'Включить ночную тему',
+                  child: InkWell(
+                    onTap: () => onThemeChanged(!darkMode),
+                    borderRadius: BorderRadius.circular(compact ? 24 : 10),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOutCubic,
+                      padding: EdgeInsets.all(compact ? 10 : 11),
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
+                      decoration: BoxDecoration(
+                        color: compact
+                            ? Colors.transparent
+                            : darkMode
+                            ? const Color(0xFF2A2E36)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(compact ? 24 : 10),
+                        border: compact
+                            ? null
+                            : Border.all(color: const Color(0xFFF28C28)),
+                      ),
+                      child: AnimatedRotation(
+                        turns: darkMode ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 350),
+                        curve: Curves.easeOutBack,
+                        child: Icon(
+                          darkMode ? Icons.dark_mode : Icons.light_mode,
+                          color: const Color(0xFFF28C28),
+                          size: 19,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
-          ],
-        ),
-        const SizedBox(width: 8),
-        Tooltip(
-          message: darkMode ? 'Включить дневную тему' : 'Включить ночную тему',
-          child: Semantics(
-            button: true,
-            label: darkMode ? 'Включить дневную тему' : 'Включить ночную тему',
-            child: InkWell(
-              onTap: () => onThemeChanged(!darkMode),
-              borderRadius: BorderRadius.circular(10),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOutCubic,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color: darkMode ? const Color(0xFF2A2E36) : Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFF28C28)),
-                ),
-                child: AnimatedRotation(
-                  turns: darkMode ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 350),
-                  curve: Curves.easeOutBack,
-                  child: Icon(
-                    darkMode ? Icons.dark_mode : Icons.light_mode,
-                    color: const Color(0xFFF28C28),
-                    size: 19,
-                  ),
-                ),
-              ),
-            ),
+              if (!compact) ...[
+                const SizedBox(width: 10),
+                _Clock(now: now, compact: false),
+              ],
+            ],
           ),
         ),
-        const SizedBox(width: 10),
-        _Clock(now: now, compact: compact),
       ],
     ),
   );

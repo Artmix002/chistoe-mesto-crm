@@ -12,6 +12,7 @@ class DashboardWorkspace extends StatelessWidget {
     required this.onEditNote,
     required this.onDeleteNote,
     required this.onAddNote,
+    required this.canEditNotes,
     required this.plan,
     required this.actualRevenue,
     required this.onEditPlan,
@@ -28,6 +29,7 @@ class DashboardWorkspace extends StatelessWidget {
   final ValueChanged<StickyNote> onEditNote;
   final ValueChanged<StickyNote> onDeleteNote;
   final VoidCallback onAddNote;
+  final bool canEditNotes;
   final DashboardRevenuePlan? plan;
   final double actualRevenue;
   final VoidCallback onEditPlan;
@@ -51,7 +53,7 @@ class DashboardWorkspace extends StatelessWidget {
             const Icon(Icons.calendar_month_outlined, color: Color(0xFFF28C28)),
             const SizedBox(width: 8),
             Text(
-              'Период Dashboard',
+              'период дашборд',
               style: TextStyle(
                 color: mainTextColor,
                 fontWeight: FontWeight.w700,
@@ -167,7 +169,7 @@ class DashboardWorkspace extends StatelessWidget {
             Text('${notes.length}/8', style: TextStyle(color: mutedTextColor)),
             const SizedBox(width: 8),
             FilledButton.icon(
-              onPressed: notes.length >= 8 ? null : onAddNote,
+              onPressed: !canEditNotes || notes.length >= 8 ? null : onAddNote,
               icon: const Icon(Icons.add),
               label: const Text('Заметка'),
             ),
@@ -181,8 +183,8 @@ class DashboardWorkspace extends StatelessWidget {
             ...notes.map(
               (note) => _StickyNoteCard(
                 note: note,
-                onTap: () => onEditNote(note),
-                onDelete: () => onDeleteNote(note),
+                onTap: canEditNotes ? () => onEditNote(note) : null,
+                onDelete: canEditNotes ? () => onDeleteNote(note) : null,
               ),
             ),
             if (notes.isEmpty)
@@ -201,14 +203,10 @@ class DashboardWorkspace extends StatelessWidget {
 }
 
 class _StickyNoteCard extends StatelessWidget {
-  const _StickyNoteCard({
-    required this.note,
-    required this.onTap,
-    required this.onDelete,
-  });
+  const _StickyNoteCard({required this.note, this.onTap, this.onDelete});
   final StickyNote note;
-  final VoidCallback onTap;
-  final VoidCallback onDelete;
+  final VoidCallback? onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) => InkWell(

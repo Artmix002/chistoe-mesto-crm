@@ -10,7 +10,8 @@ const CRM_SCHEMA_VERSION = 3;
 const CRM_AUDIT_SHEET = 'CRM_SyncAudit';
 const CRM_SUPPORTED_SCOPES = [
   'clients', 'stock', 'manualDeals', 'finance', 'appointments',
-  'serviceCatalog', 'workspace', 'knowledgeBase', 'messages', 'auditOnly',
+  'serviceCatalog', 'workspace', 'dashboardNotes', 'revenuePlans',
+  'knowledgeBase', 'messages', 'auditOnly',
 ];
 const CRM_MAX_CHANGES_PER_REQUEST = 20;
 const CRM_LOCK_TIMEOUT_MS = 30000;
@@ -18,7 +19,6 @@ const CRM_USERS_PROPERTY = 'CRM_USERS';
 const CRM_SESSIONS_PROPERTY = 'CRM_SESSIONS';
 const CRM_CONFIGURATION_PROPERTY = 'CRM_CONFIGURATION';
 const CRM_SECRETS_PROPERTY = 'CRM_SECRETS';
-const CRM_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const CRM_PERMISSION_AREAS = [
   'dashboard', 'clients', 'deals', 'calendar', 'finance', 'stock',
   'settings', 'messages', 'bot', 'integrations', 'backup',
@@ -92,6 +92,13 @@ function doPost(event) {
       lock.releaseLock();
     }
   } catch (error) {
+    if (error && error.crmAuthCode) {
+      return json_({
+        acceptedIds: [],
+        error: 'Сессия отозвана. Войдите снова.',
+        errorCode: error.crmAuthCode,
+      });
+    }
     // Не подтверждаем ничего при ошибке: клиент безопасно повторит запрос.
     // Не пишем объект исключения в журнал: он может содержать URL или
     // фрагменты входного запроса. Для диагностики достаточно общего кода.
@@ -112,6 +119,12 @@ function parseProperty_(key, fallback) {
 
 function saveProperty_(key, value) {
   scriptProperties_().setProperty(key, JSON.stringify(value));
+}
+
+function authError_(code) {
+  const error = new Error(code);
+  error.crmAuthCode = code;
+  return error;
 }
 
 function defaultPermissions_(role) {
@@ -187,9 +200,8 @@ function publicUsers_() { return allUsers_().map(publicUser_); }
 
 function cleanSessions_() {
   const sessions = parseProperty_(CRM_SESSIONS_PROPERTY, {});
-  const now = new Date().getTime();
   Object.keys(sessions).forEach((token) => {
-    if (!sessions[token] || Number(sessions[token].expiresAt || 0) <= now) {
+    if (!sessions[token] || !sessions[token].userId) {
       delete sessions[token];
     }
   });
@@ -201,9 +213,9 @@ function requireSession_(request) {
   const token = String(request.sessionToken || '');
   const sessions = cleanSessions_();
   const session = sessions[token];
-  if (!token || !session) throw new Error('Сессия недействительна. Войдите снова.');
+  if (!token || !session) throw authError_('SESSION_INVALID');
   const user = allUsers_().filter((item) => item.id === session.userId)[0];
-  if (!user || user.active === false) throw new Error('Пользователь отключён.');
+  if (!user || user.active === false) throw authError_('ACCOUNT_REVOKED');
   return {token: token, user: user};
 }
 
@@ -230,6 +242,7 @@ function requireChangePermissions_(session, changes) {
   const scopeArea = {
     clients: 'clients', stock: 'stock', manualDeals: 'deals', finance: 'finance',
     appointments: 'calendar', serviceCatalog: 'integrations', workspace: 'dashboard',
+    dashboardNotes: 'dashboard', revenuePlans: 'finance',
     messages: 'messages', knowledgeBase: 'bot', auditOnly: 'dashboard',
   };
   (changes || []).forEach((change) => {
@@ -240,6 +253,23 @@ function requireChangePermissions_(session, changes) {
 
 function configuration_() {
   return parseProperty_(CRM_CONFIGURATION_PROPERTY, {});
+}
+
+function dataSources_(configuration) {
+  const sources = {
+    deals: 'Август',
+    accounting: 'Основное',
+    expenses: 'Расходы',
+    appointments: 'CRM_Appointments',
+  };
+  const configured = configuration && configuration.dataSources;
+  if (configured && typeof configured === 'object') {
+    Object.keys(sources).forEach((key) => {
+      const value = String(configured[key] || '').trim();
+      if (value) sources[key] = value;
+    });
+  }
+  return sources;
 }
 
 function sessionResponse_(session) {
@@ -255,7 +285,7 @@ function login_(request) {
   }
   const sessions = cleanSessions_();
   const token = randomToken_();
-  sessions[token] = {userId: user.id, expiresAt: new Date().getTime() + CRM_SESSION_TTL_MS};
+  sessions[token] = {userId: user.id};
   saveProperty_(CRM_SESSIONS_PROPERTY, sessions);
   const response = sessionResponse_({token: token, user: user});
   response.sessionToken = token;
@@ -267,6 +297,14 @@ function logout_(token) {
   delete sessions[String(token || '')];
   saveProperty_(CRM_SESSIONS_PROPERTY, sessions);
   return {ok: true};
+}
+
+function revokeUserSessions_(userId) {
+  const sessions = cleanSessions_();
+  Object.keys(sessions).forEach((token) => {
+    if (sessions[token].userId === userId) delete sessions[token];
+  });
+  saveProperty_(CRM_SESSIONS_PROPERTY, sessions);
 }
 
 function saveUser_(session, request) {
@@ -296,6 +334,7 @@ function saveUser_(session, request) {
     CRM_PERMISSION_AREAS.forEach((area) => user.permissions[area] = 'edit');
   }
   saveProperty_(CRM_USERS_PROPERTY, users);
+  if (pin || user.active === false) revokeUserSessions_(user.id);
   return {users: publicUsers_()};
 }
 
@@ -311,6 +350,7 @@ function deactivateUser_(session, request) {
   }
   user.active = false;
   saveProperty_(CRM_USERS_PROPERTY, users);
+  revokeUserSessions_(user.id);
   return {users: publicUsers_()};
 }
 
@@ -320,6 +360,7 @@ function migrateConfiguration_(session, request) {
   if (!config || typeof config !== 'object') throw new Error('Некорректная конфигурация.');
   const publicConfig = {
     sheetUrl: String(config.sheetUrl || ''),
+    dataSources: dataSources_(config),
     calendarId: String(config.calendarId || 'primary'),
     calendarName: String(config.calendarName || 'Основной календарь'),
     aiSettings: config.aiSettings || {},
@@ -421,7 +462,8 @@ function providerResponse_(response) {
 }
 
 function readSheet_(request) {
-  const allowed = ['Август', 'Основное', 'Расходы'];
+  const sources = dataSources_(configuration_());
+  const allowed = Object.keys(sources).map((key) => sources[key]);
   if (allowed.indexOf(String(request.sheet || '')) === -1) {
     return json_({rows: [], error: 'Unsupported sheet'});
   }
@@ -545,7 +587,7 @@ function applyChange_(spreadsheet, change) {
       return;
     case 'serviceCatalog':
       replaceObjectSheet_(spreadsheet, 'CRM_ServiceCatalog', [
-        'id', 'name', 'durationHours', 'category', 'materialIds', 'prices',
+        'id', 'name', 'durationHours', 'category', 'materialIds',
         'archived', 'updatedAt',
       ], payload.items || []);
       return;
@@ -559,6 +601,16 @@ function applyChange_(spreadsheet, change) {
       replaceObjectSheet_(spreadsheet, 'CRM_DashboardSettings', [
         'dashboardPeriod', 'dashboardPeriodFrom', 'dashboardPeriodTo',
       ], [payload.settings || {}]);
+      return;
+    case 'dashboardNotes':
+      replaceObjectSheet_(spreadsheet, 'CRM_DashboardNotes', [
+        'id', 'text', 'createdAt', 'updatedAt',
+      ], payload.notes || []);
+      return;
+    case 'revenuePlans':
+      replaceObjectSheet_(spreadsheet, 'CRM_RevenuePlans', [
+        'id', 'title', 'target', 'from', 'to', 'createdAt',
+      ], payload.revenuePlans || []);
       return;
     case 'messages':
       replaceObjectSheet_(spreadsheet, 'CRM_MessageSettings', [
