@@ -679,6 +679,24 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         }
       });
     }
+    final configuredAccounts = configuration['messengerAccounts'];
+    if (configuredAccounts is Map) {
+      configuredAccounts.forEach((key, value) {
+        final channel = key.toString();
+        if (messengerConnected.containsKey(channel) &&
+            value.toString().trim().isNotEmpty) {
+          unawaited(
+            prefs.setString('messenger_${channel}_account', value.toString()),
+          );
+        }
+      });
+    }
+    final configuredVkPeer = configuration['vkNotificationPeer']
+        ?.toString()
+        .trim();
+    if (configuredVkPeer != null && configuredVkPeer.isNotEmpty) {
+      unawaited(prefs.setString('messenger_vk_notify_peer', configuredVkPeer));
+    }
     final configuredAvito = configuration['avitoAccounts'];
     if (configuredAvito is List && configuredAvito.isNotEmpty) {
       avitoAccounts = configuredAvito
@@ -719,6 +737,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       // авторизации восстанавливаем кэш, очередь и общее рабочее пространство.
       await _loadPrefs();
       if (!mounted) return;
+      setState(() => _applyServerSession(session));
+      if (messengerConnected['vk'] == true) {
+        unawaited(_loadVkConversations(silent: true));
+      }
       _audit('Вход в CRM', 'Сессия', session.user.name);
     } catch (error) {
       if (mounted) setState(() => _authError = _safeAuthError(error));
@@ -880,6 +902,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       'aiSettings': aiSettings.toJson(),
       'messengerTokens': messengerSecrets,
       'messengers': messengerConnected,
+      'messengerAccounts': {
+        for (final channel in messengerConnected.keys)
+          channel: prefs.getString('messenger_${channel}_account') ?? '',
+      },
+      'vkNotificationPeer': prefs.getString('messenger_vk_notify_peer') ?? '',
       'avitoAccounts': avitoAccounts,
     };
     try {
@@ -3175,21 +3202,13 @@ $instructions
         await _saveMessageMeta();
         try {
           if (item['channel'] == 'vk') {
-            final response = await _withRetry(
-              () => _apiClient.post(
-                Uri.https(
-                  'api.vk.com',
-                  '/method/messages.send',
-                  _vkParams({
-                    'peer_id': item['peer'] ?? '',
-                    'random_id': item['vkRandomId'] ?? '',
-                    'message': item['text'] ?? '',
-                  }),
-                ),
-                retries: 0,
-              ),
+            final data = await _withRetry(
+              () => _vkRequest('messages.send', {
+                'peer_id': item['peer'] ?? '',
+                'random_id': item['vkRandomId'] ?? '',
+                'message': item['text'] ?? '',
+              }),
             );
-            final data = jsonDecode(response.body) as Map<String, dynamic>;
             if (data['error'] != null) {
               throw Exception('VK не принял сообщение');
             }
@@ -5220,20 +5239,12 @@ $instructions
     required String peerId,
     required String text,
   }) async {
-    final token = _messengerToken('vk');
-    if (token.isEmpty) return 'Не найден ключ сообщества VK.';
     try {
-      final response = await _apiClient.post(
-        Uri.parse('https://api.vk.com/method/messages.send'),
-        body: {
-          'peer_id': peerId,
-          'random_id': DateTime.now().microsecondsSinceEpoch.toString(),
-          'message': text,
-          'access_token': token,
-          'v': '5.199',
-        },
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = await _vkRequest('messages.send', {
+        'peer_id': peerId,
+        'random_id': DateTime.now().microsecondsSinceEpoch.toString(),
+        'message': text,
+      });
       if (data['error'] != null) {
         final error = data['error'] as Map;
         return error['error_msg']?.toString() ?? 'VK не принял уведомление';
@@ -5249,21 +5260,14 @@ $instructions
   }
 
   Future<String?> _deleteVkMessage(String messageId) async {
-    final token = _messengerToken('vk');
     final peerId = prefs.getString('messenger_vk_notify_peer') ?? '';
-    if (token.isEmpty || peerId.isEmpty || messageId.isEmpty) return null;
+    if (peerId.isEmpty || messageId.isEmpty) return null;
     try {
-      final response = await _apiClient.post(
-        Uri.parse('https://api.vk.com/method/messages.delete'),
-        body: {
-          'peer_id': peerId,
-          'message_ids': messageId,
-          'delete_for_all': '1',
-          'access_token': token,
-          'v': '5.199',
-        },
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = await _vkRequest('messages.delete', {
+        'peer_id': peerId,
+        'message_ids': messageId,
+        'delete_for_all': '1',
+      });
       if (data['error'] != null) {
         final error = data['error'] as Map;
         return error['error_msg']?.toString() ?? 'VK не удалил уведомление';
@@ -5284,21 +5288,14 @@ $instructions
     }
     // Старые записи могли быть созданы до сохранения ID сообщения.
     // Ищем уведомление по идентификатору записи в истории чата и удаляем его.
-    final token = _messengerToken('vk');
     final peerId = prefs.getString('messenger_vk_notify_peer') ?? '';
-    if (token.isEmpty || peerId.isEmpty) return;
+    if (peerId.isEmpty) return;
     try {
-      final response = await _apiClient.post(
-        Uri.parse('https://api.vk.com/method/messages.search'),
-        body: {
-          'peer_id': peerId,
-          'q': eventId,
-          'count': '20',
-          'access_token': token,
-          'v': '5.199',
-        },
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = await _vkRequest('messages.search', {
+        'peer_id': peerId,
+        'q': eventId,
+        'count': '20',
+      });
       final items = (data['response']?['items'] as List? ?? const []);
       for (final item in items) {
         final foundId = item is Map ? item['id']?.toString() : null;
@@ -5956,10 +5953,36 @@ $instructions
         'Запись',
         '${id == null ? 'Создана' : 'Изменена'} запись ${name.text.trim()}',
       );
+      String? vkError;
+      if (id == null) {
+        _lastVkMessageId = null;
+        vkError = await _notifyVkAboutAppointment(
+          when: when,
+          name: name.text,
+          source: source.text,
+          car: car.text,
+          service: service.text,
+          cost: totalCost > 0 ? totalCost.toStringAsFixed(0) : cost.text,
+          phone: phone.text,
+          note: note.text,
+          items: itemsText,
+          performer: performer.text,
+        );
+        if (vkError == null && _lastVkMessageId != null) {
+          await prefs.setInt(
+            'messenger_vk_appointment_$savedId',
+            _lastVkMessageId!,
+          );
+        }
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Запись сохранена и будет синхронизирована'),
+          SnackBar(
+            content: Text(
+              vkError == null
+                  ? 'Запись сохранена и будет синхронизирована'
+                  : 'Запись сохранена, но ВК: $vkError',
+            ),
           ),
         );
       }
@@ -6684,6 +6707,10 @@ $instructions
       'instagram': 'Instagram',
     };
     final token = TextEditingController(text: _messengerToken(channel));
+    final usesServerToken =
+        _session != null &&
+        messengerConnected[channel] == true &&
+        _messengerToken(channel).isEmpty;
     final account = TextEditingController(
       text: prefs.getString('messenger_${channel}_account') ?? '',
     );
@@ -6722,6 +6749,9 @@ $instructions
                       ? 'Токен бота'
                       : 'Токен доступа',
                   prefixIcon: const Icon(Icons.key_outlined),
+                  helperText: usesServerToken
+                      ? 'Токен хранится на CRM-сервере. Введите новый только для замены.'
+                      : null,
                 ),
               ),
               if (channel != 'telegram')
@@ -6773,7 +6803,7 @@ $instructions
         ],
       ),
     );
-    if (accepted != true || token.text.trim().isEmpty) {
+    if (accepted != true || (token.text.trim().isEmpty && !usesServerToken)) {
       disposeControllers();
       return;
     }
@@ -6783,8 +6813,11 @@ $instructions
     bool success = false;
     String status = 'Не удалось проверить доступ. Проверьте токен.';
     try {
-      http.Response res;
-      if (channel == 'telegram') {
+      late http.Response res;
+      if (usesServerToken) {
+        success = true;
+        status = 'Подключён через CRM-сервер';
+      } else if (channel == 'telegram') {
         res = await _apiClient.get(
           Uri.parse('https://api.telegram.org/bot${token.text.trim()}/getMe'),
         );
@@ -6853,7 +6886,7 @@ $instructions
           }),
         );
       }
-      if (channel != 'vk') {
+      if (!usesServerToken && channel != 'vk') {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         success =
             res.statusCode == 200 &&
@@ -6869,10 +6902,7 @@ $instructions
       status = e.toString().replaceFirst('Exception: ', '');
     }
     try {
-      if (token.text.trim().isEmpty) {
-        messengerSecrets.remove(channel);
-        await secretStore.delete('messenger_${channel}_token');
-      } else {
+      if (token.text.trim().isNotEmpty) {
         messengerSecrets[channel] = token.text.trim();
         await secretStore.write(
           'messenger_${channel}_token',
@@ -6891,6 +6921,7 @@ $instructions
         );
       }
       await prefs.setBool('messenger_$channel', success);
+      await _migrateLocalConfiguration(clearLocalSecrets: false, silent: true);
       _audit(
         success ? 'Подключена интеграция' : 'Ошибка подключения интеграции',
         'Интеграция',
@@ -8629,26 +8660,36 @@ $instructions
     'v': '5.199',
   };
 
+  Future<Map<String, dynamic>> _vkRequest(
+    String method,
+    Map<String, String> body,
+  ) async {
+    if (_messengerToken('vk').isEmpty) {
+      return _proxyIntegration('message.vk', {'method': method, 'body': body});
+    }
+    final response = await _apiClient.post(
+      Uri.parse('https://api.vk.com/method/$method'),
+      body: _vkParams(body),
+    );
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<void> _setVkNotificationPeer(String peerId) async {
+    await prefs.setString('messenger_vk_notify_peer', peerId);
+    if (canManageIntegrations) {
+      await _migrateLocalConfiguration(clearLocalSecrets: false, silent: true);
+    }
+  }
+
   Future<void> _loadVkConversations({bool silent = false}) async {
     final token = _messengerToken('vk');
     if (token.isEmpty && _session == null) return;
     if (mounted) setState(() => vkLoading = true);
     try {
-      final data = token.isEmpty
-          ? await _proxyIntegration('message.vk', {
-              'method': 'messages.getConversations',
-              'body': {'count': '100', 'extended': '1'},
-            })
-          : jsonDecode(
-                  (await _apiClient.get(
-                    Uri.https(
-                      'api.vk.com',
-                      '/method/messages.getConversations',
-                      _vkParams({'count': '100', 'extended': '1'}),
-                    ),
-                  )).body,
-                )
-                as Map<String, dynamic>;
+      final data = await _vkRequest('messages.getConversations', {
+        'count': '100',
+        'extended': '1',
+      });
       if (data['error'] != null) {
         final error = data['error'] as Map;
         throw Exception(
@@ -8700,14 +8741,11 @@ $instructions
       vkLoading = true;
     });
     try {
-      final response = await _apiClient.get(
-        Uri.https(
-          'api.vk.com',
-          '/method/messages.getHistory',
-          _vkParams({'peer_id': peerId, 'count': '100', 'rev': '1'}),
-        ),
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = await _vkRequest('messages.getHistory', {
+        'peer_id': peerId,
+        'count': '100',
+        'rev': '1',
+      });
       if (data['error'] != null) {
         final error = data['error'] as Map;
         throw Exception(
@@ -8739,18 +8777,11 @@ $instructions
         ?.toString();
     if (text.isEmpty || peerId == null) return;
     try {
-      final response = await _apiClient.post(
-        Uri.https(
-          'api.vk.com',
-          '/method/messages.send',
-          _vkParams({
-            'peer_id': peerId,
-            'random_id': DateTime.now().microsecondsSinceEpoch.toString(),
-            'message': text,
-          }),
-        ),
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = await _vkRequest('messages.send', {
+        'peer_id': peerId,
+        'random_id': DateTime.now().microsecondsSinceEpoch.toString(),
+        'message': text,
+      });
       if (data['error'] != null) {
         final error = data['error'] as Map;
         throw Exception(
@@ -8817,7 +8848,7 @@ $instructions
         prefs.getString('messenger_vk_notify_peer') ==
             selectedVkConversation?['conversation']?['peer']?['id']?.toString(),
     onSelectNotificationChat: (peerId) async {
-      await prefs.setString('messenger_vk_notify_peer', peerId);
+      await _setVkNotificationPeer(peerId);
       if (!mounted) return;
       setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(

@@ -358,6 +358,7 @@ function migrateConfiguration_(session, request) {
   requirePermission_(session, 'integrations', 'edit');
   const config = request.configuration;
   if (!config || typeof config !== 'object') throw new Error('Некорректная конфигурация.');
+  const previousSecrets = parseProperty_(CRM_SECRETS_PROPERTY, {});
   const publicConfig = {
     sheetUrl: String(config.sheetUrl || ''),
     dataSources: dataSources_(config),
@@ -365,6 +366,8 @@ function migrateConfiguration_(session, request) {
     calendarName: String(config.calendarName || 'Основной календарь'),
     aiSettings: config.aiSettings || {},
     messengers: config.messengers || {},
+    messengerAccounts: config.messengerAccounts || {},
+    vkNotificationPeer: String(config.vkNotificationPeer || ''),
     avitoAccounts: (config.avitoAccounts || []).map((item) => ({
       key: item.key || '', name: item.name || 'Avito', userId: item.userId || '',
     })),
@@ -375,7 +378,7 @@ function migrateConfiguration_(session, request) {
     calendarRefreshToken: String(config.calendarRefreshToken || ''),
     calendarClientSecret: String(config.calendarClientSecret || ''),
     aiApiKey: String(config.aiApiKey || ''),
-    messengerTokens: config.messengerTokens || {},
+    messengerTokens: Object.assign({}, previousSecrets.messengerTokens || {}, config.messengerTokens || {}),
     avitoAccounts: config.avitoAccounts || [],
   };
   saveProperty_(CRM_CONFIGURATION_PROPERTY, publicConfig);
