@@ -350,6 +350,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   List<Map<String, dynamic>> avitoAccounts = [];
   String? activeAvitoAccountKey;
   int? _lastVkMessageId;
+  int? _vkSummaryMessageId;
+  final Map<String, int> _vkAppointmentMessageIds = {};
   String avitoSection = 'Чаты';
   List<String> availableServices = [
     'Химчистка салона',
@@ -1057,6 +1059,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshWorkspaceFromCloud());
+      if (_usesGoogleCalendar) unawaited(_loadCalendarEvents());
     }
   }
 
@@ -1203,6 +1206,23 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               .toList(),
         );
       }
+      final savedVkAppointmentMessages = prefs.getString(
+        'messenger_vk_appointment_messages',
+      );
+      if (savedVkAppointmentMessages != null) {
+        final restored = jsonDecode(savedVkAppointmentMessages);
+        if (restored is Map) {
+          restored.forEach((key, value) {
+            final messageId = value is num
+                ? value.toInt()
+                : int.tryParse(value.toString());
+            if (messageId != null) {
+              _vkAppointmentMessageIds[key.toString()] = messageId;
+            }
+          });
+        }
+      }
+      _vkSummaryMessageId = prefs.getInt('messenger_vk_summary_message_id');
     } catch (_) {}
     final savedCategories = prefs.getStringList('accounting_categories');
     if (savedCategories != null && savedCategories.isNotEmpty) {
@@ -1795,6 +1815,8 @@ $instructions
     messageAssignees: messageAssignees,
     messageTags: messageTags,
     quickReplyTemplates: quickReplyTemplates,
+    vkAppointmentMessageIds: _vkAppointmentMessageIds,
+    vkSummaryMessageId: _vkSummaryMessageId,
     accountingCategories: accountingCategories,
     dashboardPeriod: dashboardPeriod,
     dashboardPeriodFrom: dashboardCustomFrom?.toIso8601String() ?? '',
@@ -2734,6 +2756,18 @@ $instructions
       readMessageDialogs.toList(),
     );
     await prefs.setString('pending_messages', jsonEncode(pendingMessages));
+    await prefs.setString(
+      'messenger_vk_appointment_messages',
+      jsonEncode(_vkAppointmentMessageIds),
+    );
+    if (_vkSummaryMessageId == null) {
+      await prefs.remove('messenger_vk_summary_message_id');
+    } else {
+      await prefs.setInt(
+        'messenger_vk_summary_message_id',
+        _vkSummaryMessageId!,
+      );
+    }
     if (sync && _crmDataLoaded) {
       _enqueueCloudSnapshot('Сообщения', 'Обновлены общие настройки сообщений');
     }
@@ -4092,6 +4126,29 @@ $instructions
               ),
             );
         }
+        final vkAppointmentMessages =
+            cloudMessageSettings['vkAppointmentMessageIds'];
+        if (vkAppointmentMessages is Map) {
+          _vkAppointmentMessageIds
+            ..clear()
+            ..addEntries(
+              vkAppointmentMessages.entries.map((entry) {
+                final value = entry.value;
+                final messageId = value is num
+                    ? value.toInt()
+                    : int.tryParse(value.toString());
+                return messageId == null
+                    ? null
+                    : MapEntry(entry.key.toString(), messageId);
+              }).whereType<MapEntry<String, int>>(),
+            );
+        }
+        final summaryValue = cloudMessageSettings['vkSummaryMessageId'];
+        if (summaryValue != null && summaryValue.toString().isNotEmpty) {
+          _vkSummaryMessageId = summaryValue is num
+              ? summaryValue.toInt()
+              : int.tryParse(summaryValue.toString());
+        }
       }
       final cloudAudit = cloud['audit'];
       if (cloudAudit is List) {
@@ -4925,11 +4982,29 @@ $instructions
       }
       if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
       final items = (jsonDecode(res.body)['items'] as List? ?? []).cast<Map>();
+      final loadedEvents = items
+          .map((event) => Map<String, dynamic>.from(event))
+          .toList();
+      final loadedIds = loadedEvents
+          .map((event) => event['id']?.toString())
+          .whereType<String>()
+          .toSet();
+      final previouslyLoadedIds = calendarEvents
+          .map((event) => event['id']?.toString())
+          .whereType<String>()
+          .toSet();
+      final removedVkAppointmentIds = _crmDataLoaded
+          ? _vkAppointmentMessageIds.keys
+                .where(
+                  (eventId) =>
+                      previouslyLoadedIds.contains(eventId) &&
+                      !loadedIds.contains(eventId),
+                )
+                .toList(growable: false)
+          : const <String>[];
       if (mounted) {
         setState(() {
-          calendarEvents = items
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
+          calendarEvents = loadedEvents;
           calendarStatus = 'Календарь подключён. Записей: ${items.length}';
         });
       }
@@ -4938,6 +5013,12 @@ $instructions
         jsonEncode(calendarEvents),
       );
       await _recordIncomingAppointments(calendarEvents);
+      if (removedVkAppointmentIds.isNotEmpty) {
+        for (final eventId in removedVkAppointmentIds) {
+          await _removeVkAppointmentMessage(eventId);
+        }
+        await _sendVkAppointmentsSummary();
+      }
     } catch (_) {
       if (mounted) {
         setState(
@@ -5218,10 +5299,13 @@ $instructions
       }
       text.writeln('Всего записей: ${upcoming.length}');
     }
-    final previousId = prefs.getInt('messenger_vk_summary_message_id');
+    final previousId =
+        _vkSummaryMessageId ?? prefs.getInt('messenger_vk_summary_message_id');
     if (previousId != null) {
-      await _deleteVkMessage(previousId.toString());
-      await prefs.remove('messenger_vk_summary_message_id');
+      final deleteError = await _deleteVkMessage(previousId.toString());
+      if (deleteError != null) return deleteError;
+      _vkSummaryMessageId = null;
+      await _saveMessageMeta();
     }
     final error = await _sendVkText(
       peerId: peerId,
@@ -5230,7 +5314,8 @@ $instructions
     if (error != null) return error;
     final newId = _lastVkMessageId;
     if (newId != null) {
-      await prefs.setInt('messenger_vk_summary_message_id', newId);
+      _vkSummaryMessageId = newId;
+      await _saveMessageMeta();
     }
     return null;
   }
@@ -5278,18 +5363,30 @@ $instructions
     }
   }
 
-  Future<void> _removeVkAppointmentMessage(String eventId) async {
+  Future<String?> _rememberVkAppointmentMessage(String eventId) async {
+    final messageId = _lastVkMessageId;
+    if (messageId == null) return null;
+    _vkAppointmentMessageIds[eventId] = messageId;
+    await prefs.setInt('messenger_vk_appointment_$eventId', messageId);
+    await _saveMessageMeta();
+    return null;
+  }
+
+  Future<String?> _removeVkAppointmentMessage(String eventId) async {
     final key = 'messenger_vk_appointment_$eventId';
-    final messageId = prefs.getInt(key);
+    final messageId = _vkAppointmentMessageIds[eventId] ?? prefs.getInt(key);
     if (messageId != null) {
-      await _deleteVkMessage(messageId.toString());
+      final deleteError = await _deleteVkMessage(messageId.toString());
+      if (deleteError != null) return deleteError;
+      _vkAppointmentMessageIds.remove(eventId);
       await prefs.remove(key);
-      return;
+      await _saveMessageMeta();
+      return null;
     }
     // Старые записи могли быть созданы до сохранения ID сообщения.
     // Ищем уведомление по идентификатору записи в истории чата и удаляем его.
     final peerId = prefs.getString('messenger_vk_notify_peer') ?? '';
-    if (peerId.isEmpty) return;
+    if (peerId.isEmpty) return null;
     try {
       final data = await _vkRequest('messages.search', {
         'peer_id': peerId,
@@ -5302,6 +5399,7 @@ $instructions
         if (foundId != null) await _deleteVkMessage(foundId);
       }
     } catch (_) {}
+    return null;
   }
 
   String _googleCalendarError(http.Response response) {
@@ -5969,12 +6067,35 @@ $instructions
           performer: performer.text,
         );
         if (vkError == null && _lastVkMessageId != null) {
-          await prefs.setInt(
-            'messenger_vk_appointment_$savedId',
-            _lastVkMessageId!,
+          await _rememberVkAppointmentMessage(savedId);
+        }
+      } else if (status != 'Записан' && status != originalStatus) {
+        vkError = await _removeVkAppointmentMessage(savedId);
+      } else if (status == 'Записан') {
+        final deleteError = await _removeVkAppointmentMessage(savedId);
+        if (deleteError == null) {
+          _lastVkMessageId = null;
+          vkError = await _notifyVkAboutAppointment(
+            when: when,
+            name: name.text,
+            source: source.text,
+            car: car.text,
+            service: service.text,
+            cost: totalCost > 0 ? totalCost.toStringAsFixed(0) : cost.text,
+            phone: phone.text,
+            note: note.text,
+            items: itemsText,
+            performer: performer.text,
           );
+          if (vkError == null && _lastVkMessageId != null) {
+            await _rememberVkAppointmentMessage(savedId);
+          }
+        } else {
+          vkError = deleteError;
         }
       }
+      final summaryError = await _sendVkAppointmentsSummary();
+      vkError ??= summaryError;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -6055,10 +6176,7 @@ $instructions
           );
           final savedId = saved['id']?.toString();
           if (vkError == null && savedId != null && _lastVkMessageId != null) {
-            await prefs.setInt(
-              'messenger_vk_appointment_$savedId',
-              _lastVkMessageId!,
-            );
+            await _rememberVkAppointmentMessage(savedId);
           }
         } else if (status != 'Записан' && status != originalStatus) {
           await _removeVkAppointmentMessage(id);
@@ -6079,10 +6197,7 @@ $instructions
             performer: performer.text,
           );
           if (vkError == null && _lastVkMessageId != null) {
-            await prefs.setInt(
-              'messenger_vk_appointment_$id',
-              _lastVkMessageId!,
-            );
+            await _rememberVkAppointmentMessage(id);
           }
         }
         await _sendVkAppointmentsSummary();
@@ -6147,6 +6262,8 @@ $instructions
         'Запись',
         '$archivedStatus: ${event['summary'] ?? 'Запись'}',
       );
+      await _removeVkAppointmentMessage(id);
+      await _sendVkAppointmentsSummary();
       return;
     }
     final base =
@@ -6176,6 +6293,7 @@ $instructions
         '${event['summary'] ?? 'Запись'}${reason.isEmpty ? '' : ': $reason'}',
       );
       await _loadCalendarEvents();
+      await _sendVkAppointmentsSummary();
     }
   }
 

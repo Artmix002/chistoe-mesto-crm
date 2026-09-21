@@ -1392,6 +1392,21 @@ void main() {
     expect(queue.items.first.attempts, 0);
   });
 
+  test('sync queue accepts shared message snapshots', () {
+    final messageSnapshot = PendingChange(
+      id: 'message-settings-1',
+      entity: 'Сообщения',
+      details: 'Обновлены ссылки VK',
+      createdAt: '2026-09-21T10:00:00Z',
+      payload: {
+        'schemaVersion': SheetsSchema.version,
+        'kind': 'snapshot',
+        'scope': 'messages',
+      },
+    );
+    expect(SyncQueue.isTransportReady(messageSnapshot), isTrue);
+  });
+
   test('sync repository sends queue in bounded batches', () {
     final changes = List.generate(
       ChangesSyncRepository.maxChangesPerRequest + 3,
@@ -1599,9 +1614,13 @@ void main() {
         pendingMessages: const [
           {'id': 'message-1', 'channel': 'vk', 'text': 'Перезвоните'},
         ],
+        vkAppointmentMessageIds: const {'appointment-1': 123},
+        vkSummaryMessageId: 456,
       );
       expect(payload['scope'], 'messages');
       expect(payload['quickReplyTemplates'], ['Здравствуйте']);
+      expect(payload['vkAppointmentMessageIds'], {'appointment-1': 123});
+      expect(payload['vkSummaryMessageId'], 456);
       expect(jsonEncode(payload), isNot(contains('access_token')));
     },
   );

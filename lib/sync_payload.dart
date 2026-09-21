@@ -23,6 +23,8 @@ Map<String, dynamic> buildSyncPayload(
   Map<String, String> messageAssignees = const {},
   Map<String, List<String>> messageTags = const {},
   Iterable<String> quickReplyTemplates = const [],
+  Map<String, int> vkAppointmentMessageIds = const {},
+  int? vkSummaryMessageId,
   Iterable<String> accountingCategories = const [],
   String dashboardPeriod = 'Все время',
   String dashboardPeriodFrom = '',
@@ -129,6 +131,10 @@ Map<String, dynamic> buildSyncPayload(
         'pendingMessages': pendingMessages
             .map((message) => Map<String, String>.from(message))
             .toList(),
+        'vkAppointmentMessageIds': Map<String, int>.from(
+          vkAppointmentMessageIds,
+        ),
+        'vkSummaryMessageId': vkSummaryMessageId,
       };
     case 'Журнал CRM':
       return {

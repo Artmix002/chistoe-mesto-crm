@@ -60,6 +60,7 @@ class SyncQueue {
     'dashboardNotes',
     'revenuePlans',
     'knowledgeBase',
+    'messages',
     'auditOnly',
   };
 

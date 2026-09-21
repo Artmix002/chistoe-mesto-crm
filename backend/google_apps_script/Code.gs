@@ -618,11 +618,14 @@ function applyChange_(spreadsheet, change) {
     case 'messages':
       replaceObjectSheet_(spreadsheet, 'CRM_MessageSettings', [
         'quickReplyTemplates', 'assignees', 'tags', 'pendingMessages',
+        'vkAppointmentMessageIds', 'vkSummaryMessageId',
       ], [{
         quickReplyTemplates: payload.quickReplyTemplates || [],
         assignees: payload.assignees || {},
         tags: payload.tags || {},
         pendingMessages: payload.pendingMessages || [],
+        vkAppointmentMessageIds: payload.vkAppointmentMessageIds || {},
+        vkSummaryMessageId: payload.vkSummaryMessageId || '',
       }]);
       return;
     case 'knowledgeBase':
