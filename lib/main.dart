@@ -188,6 +188,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   final List<StockMovement> stockMovements = [];
   final List<AuditEntry> auditEntries = [];
   final SyncQueue localChangeQueue = SyncQueue();
+  final Map<String, int> _cloudRevisions = {};
   final SecretStore secretStore = const SecretStore();
   final RequestCancellation _lifecycleCancellation = RequestCancellation();
   late final ApiClient _apiClient;
@@ -1807,33 +1808,43 @@ $instructions
     }
   }
 
-  Map<String, dynamic> _syncPayload(String entity) => buildSyncPayload(
-    entity,
-    clients: clients,
-    stockItems: stockItems,
-    stockMovements: stockMovements,
-    manualDeals: manualDealRows,
-    businessTransactions: businessTransactions,
-    closedPeriods: closedAccountingPeriods,
-    closedPeriod: closedAccountingPeriod,
-    serviceCatalog: serviceCatalog.map((item) => item.toJson()),
-    stickyNotes: dashboardNotes.map((item) => item.toJson()),
-    revenuePlans: revenuePlans.map((item) => item.toJson()),
-    knowledgeBase: knowledgeBase,
-    knowledgeVersions: knowledgeVersions.map((item) => item.toJson()),
-    appointments: calendarEvents.map(Map<String, dynamic>.from),
-    auditEntries: auditEntries.map((item) => item.toJson()),
-    pendingMessages: pendingMessages,
-    messageAssignees: messageAssignees,
-    messageTags: messageTags,
-    quickReplyTemplates: quickReplyTemplates,
-    vkAppointmentMessageIds: _vkAppointmentMessageIds,
-    vkSummaryMessageId: _vkSummaryMessageId,
-    accountingCategories: accountingCategories,
-    dashboardPeriod: dashboardPeriod,
-    dashboardPeriodFrom: dashboardCustomFrom?.toIso8601String() ?? '',
-    dashboardPeriodTo: dashboardCustomTo?.toIso8601String() ?? '',
-  );
+  String _revisionScope(String scope) =>
+      scope == 'dashboardNotes' || scope == 'revenuePlans'
+      ? 'workspace'
+      : scope;
+
+  Map<String, dynamic> _syncPayload(String entity) {
+    final payload = buildSyncPayload(
+      entity,
+      clients: clients,
+      stockItems: stockItems,
+      stockMovements: stockMovements,
+      manualDeals: manualDealRows,
+      businessTransactions: businessTransactions,
+      closedPeriods: closedAccountingPeriods,
+      closedPeriod: closedAccountingPeriod,
+      serviceCatalog: serviceCatalog.map((item) => item.toJson()),
+      stickyNotes: dashboardNotes.map((item) => item.toJson()),
+      revenuePlans: revenuePlans.map((item) => item.toJson()),
+      knowledgeBase: knowledgeBase,
+      knowledgeVersions: knowledgeVersions.map((item) => item.toJson()),
+      appointments: calendarEvents.map(Map<String, dynamic>.from),
+      auditEntries: auditEntries.map((item) => item.toJson()),
+      pendingMessages: pendingMessages,
+      messageAssignees: messageAssignees,
+      messageTags: messageTags,
+      quickReplyTemplates: quickReplyTemplates,
+      vkAppointmentMessageIds: _vkAppointmentMessageIds,
+      vkSummaryMessageId: _vkSummaryMessageId,
+      accountingCategories: accountingCategories,
+      dashboardPeriod: dashboardPeriod,
+      dashboardPeriodFrom: dashboardCustomFrom?.toIso8601String() ?? '',
+      dashboardPeriodTo: dashboardCustomTo?.toIso8601String() ?? '',
+    );
+    final scope = payload['scope']?.toString() ?? '';
+    payload['baseRevision'] = _cloudRevisions[_revisionScope(scope)] ?? 0;
+    return payload;
+  }
 
   void _enqueueCloudSnapshot(String entity, String details) {
     localChangeQueue.enqueue(
@@ -3592,10 +3603,36 @@ $instructions
         endpoint: endpoint,
         token: syncToken,
       ).push(batch, cancellation: _lifecycleCancellation);
-      if (result.acceptedIds.isEmpty) {
+      if (result.acceptedIds.isEmpty && result.conflictIds.isEmpty) {
         throw StateError('Сервер не подтвердил ни одного изменения');
       }
+      _cloudRevisions
+        ..clear()
+        ..addAll(result.revisions);
       localChangeQueue.removeAccepted(result.acceptedIds);
+      if (result.conflictIds.isNotEmpty) {
+        final scopes = result.conflictScopes.join(', ');
+        final message =
+            'Конфликт синхронизации${scopes.isEmpty ? '' : ' ($scopes)'}. '
+            'Данные другого устройства сохранены на сервере; локальная правка '
+            'осталась в очереди для проверки.';
+        localChangeQueue.markAttempt(result.conflictIds, error: message);
+        await _saveCrmData();
+        if (mounted) {
+          setState(() => pendingChangesSyncError = message);
+          _pushNotification(
+            CrmNotificationLevel.warning,
+            'Конфликт синхронизации',
+            '$message Безопасно экспортируйте очередь в настройках перед разбором.',
+          );
+          if (!silent) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(message)));
+          }
+        }
+        return;
+      }
       await _saveCrmData();
       CrmLogger.info(
         'Подтверждено изменений: ${result.acceptedIds.length}',
@@ -3999,10 +4036,14 @@ $instructions
       return;
     }
     try {
-      final cloud = await _sheets.readWorkspace(
+      final snapshot = await _sheets.readWorkspace(
         cancellation: _lifecycleCancellation,
       );
-      if (cloud == null || cloud.isEmpty) return;
+      if (snapshot == null || snapshot.workspace.isEmpty) return;
+      final cloud = snapshot.workspace;
+      _cloudRevisions
+        ..clear()
+        ..addAll(snapshot.revisions);
       List<Map<String, dynamic>> objects(String key) =>
           (cloud[key] as List? ?? const [])
               .whereType<Map>()
@@ -7134,6 +7175,39 @@ $instructions
     'Accept': 'application/json, audio/mpeg, audio/wav, */*',
   };
 
+  bool get _usesServerAvitoProxy =>
+      prefs.getBool('crm_server_managed_secrets') == true &&
+      _session != null &&
+      _authService != null &&
+      _activeAvitoAccount != null;
+
+  Future<http.Response> _proxyAvitoRequest(
+    String method,
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+  }) async {
+    final response = await _proxyIntegration('avito.request', {
+      'method': method,
+      'url': uri.toString(),
+      'accountKey': _activeAvitoAccount?['key']?.toString() ?? '',
+      'contentType':
+          headers?['Content-Type'] ??
+          headers?['content-type'] ??
+          'application/json',
+      if (body != null) 'body': body.toString(),
+    });
+    final status = int.tryParse(response['status']?.toString() ?? '') ?? 502;
+    final contentType =
+        response['contentType']?.toString() ?? 'application/json';
+    return http.Response(
+      response['bodyText']?.toString() ?? '',
+      status,
+      headers: {'content-type': contentType},
+      request: http.Request(method, uri),
+    );
+  }
+
   Future<void> _avitoLog(String text) async {
     // Не выводим токены и тела запросов в stdout; developer log можно
     // отключить на production-сборке, а файл ограничивается диагностикой.
@@ -7158,7 +7232,9 @@ $instructions
     Map<String, String>? headers,
   }) async {
     await _avitoLog('GET $uri\nheaders: ${_safeAvitoHeaders(headers)}');
-    final response = await _apiClient.get(uri, headers: headers);
+    final response = _usesServerAvitoProxy && uri.host == 'api.avito.ru'
+        ? await _proxyAvitoRequest('GET', uri, headers: headers)
+        : await _apiClient.get(uri, headers: headers);
     final type = response.headers['content-type'] ?? '';
     final payload = type.startsWith('audio/')
         ? '<аудиофайл: ${response.bodyBytes.length} байт>'
@@ -7175,7 +7251,9 @@ $instructions
     await _avitoLog(
       'POST $uri\nheaders: ${_safeAvitoHeaders(headers)}\nbody: ${_safeAvitoBody(body?.toString() ?? '')}',
     );
-    final response = await _apiClient.post(uri, headers: headers, body: body);
+    final response = _usesServerAvitoProxy && uri.host == 'api.avito.ru'
+        ? await _proxyAvitoRequest('POST', uri, headers: headers, body: body)
+        : await _apiClient.post(uri, headers: headers, body: body);
     final type = response.headers['content-type'] ?? '';
     final payload = type.startsWith('audio/')
         ? '<аудиофайл: ${response.bodyBytes.length} байт>'
@@ -7222,26 +7300,36 @@ $instructions
     final account = _activeAvitoAccount;
     final clientId = account?['clientId']?.toString() ?? '';
     final clientSecret = account?['clientSecret']?.toString() ?? '';
-    if (clientId.isEmpty || clientSecret.isEmpty) return;
+    if ((clientId.isEmpty || clientSecret.isEmpty) && !_usesServerAvitoProxy) {
+      return;
+    }
     if (mounted) setState(() => avitoLoading = true);
     try {
-      final tokenResponse = await _avitoPost(
-        Uri.parse('https://api.avito.ru/token'),
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: {
-          'grant_type': 'client_credentials',
-          'client_id': clientId,
-          'client_secret': clientSecret,
-        },
-      );
-      final tokenData = jsonDecode(tokenResponse.body) as Map<String, dynamic>;
-      final token = tokenData['access_token']?.toString();
-      if (tokenResponse.statusCode != 200 || token == null || token.isEmpty) {
-        throw Exception(
-          tokenData['error_description'] ?? 'Не удалось получить токен',
+      if (_usesServerAvitoProxy) {
+        // В этом режиме Apps Script получает и обновляет токен Avito сам.
+        // Маркер нужен только существующему клиентскому коду как индикатор
+        // доступной сессии и никогда не является настоящим секретом.
+        avitoAccessToken = 'server-managed';
+      } else {
+        final tokenResponse = await _avitoPost(
+          Uri.parse('https://api.avito.ru/token'),
+          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+          body: {
+            'grant_type': 'client_credentials',
+            'client_id': clientId,
+            'client_secret': clientSecret,
+          },
         );
+        final tokenData =
+            jsonDecode(tokenResponse.body) as Map<String, dynamic>;
+        final token = tokenData['access_token']?.toString();
+        if (tokenResponse.statusCode != 200 || token == null || token.isEmpty) {
+          throw Exception(
+            tokenData['error_description'] ?? 'Не удалось получить токен',
+          );
+        }
+        avitoAccessToken = token;
       }
-      avitoAccessToken = token;
       final me = await _avitoGet(
         Uri.parse('https://api.avito.ru/core/v1/accounts/self'),
         headers: _avitoHeaders(),
@@ -7277,6 +7365,7 @@ $instructions
   }
 
   Future<bool> _refreshAvitoTokenOnly() async {
+    if (_usesServerAvitoProxy) return avitoUserId != null;
     final account = _activeAvitoAccount;
     final clientId = account?['clientId']?.toString() ?? '';
     final clientSecret = account?['clientSecret']?.toString() ?? '';

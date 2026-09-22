@@ -726,8 +726,11 @@ void main() {
       'secret',
     );
     final workspace = await repository.readWorkspace();
-    expect(workspace?['clients'], isA<List>());
-    expect((workspace?['clients'] as List).single['id'], 'client-remote');
+    expect(workspace?.workspace['clients'], isA<List>());
+    expect(
+      (workspace?.workspace['clients'] as List).single['id'],
+      'client-remote',
+    );
     expect(jsonDecode(client.sentBody as String)['operation'], 'readWorkspace');
   });
 
@@ -1523,6 +1526,54 @@ void main() {
     queue.removeAccepted(result.acceptedIds);
     expect(queue.items, isEmpty);
   });
+
+  test(
+    'sync conflict keeps only the conflicting change for manual review',
+    () async {
+      final first = PendingChange(
+        id: 'change-accepted',
+        entity: 'Клиент',
+        details: 'Изменён: Иван',
+        createdAt: '2026-09-23T10:00:00Z',
+        payload: {
+          'schemaVersion': SheetsSchema.version,
+          'kind': 'snapshot',
+          'scope': 'clients',
+          'baseRevision': 3,
+        },
+      );
+      final conflict = PendingChange(
+        id: 'change-conflict',
+        entity: 'Заметки',
+        details: 'Изменены заметки',
+        createdAt: '2026-09-23T10:00:01Z',
+        payload: {
+          'schemaVersion': SheetsSchema.version,
+          'kind': 'snapshot',
+          'scope': 'dashboardNotes',
+          'baseRevision': 1,
+        },
+      );
+      final repository = ChangesSyncRepository(
+        endpoint: Uri.parse('https://crm.example.com/sync'),
+        token: 'test-secret',
+        client: _FakeApiClient(
+          http.Response(
+            '{"acceptedIds":["change-accepted"],'
+            '"conflicts":[{"id":"change-conflict","scope":"workspace"}],'
+            '"revisions":{"clients":4,"workspace":2}}',
+            200,
+          ),
+        ),
+      );
+
+      final result = await repository.push([first, conflict]);
+      expect(result.acceptedIds, ['change-accepted']);
+      expect(result.conflictIds, ['change-conflict']);
+      expect(result.conflictScopes, ['workspace']);
+      expect(result.revisions['clients'], 4);
+    },
+  );
 
   test('sync payload scopes CRM data and excludes integration secrets', () {
     final payload = buildSyncPayload(

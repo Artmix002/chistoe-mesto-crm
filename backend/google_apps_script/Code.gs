@@ -19,6 +19,7 @@ const CRM_USERS_PROPERTY = 'CRM_USERS';
 const CRM_SESSIONS_PROPERTY = 'CRM_SESSIONS';
 const CRM_CONFIGURATION_PROPERTY = 'CRM_CONFIGURATION';
 const CRM_SECRETS_PROPERTY = 'CRM_SECRETS';
+const CRM_REVISIONS_PROPERTY = 'CRM_REVISIONS';
 const CRM_PERMISSION_AREAS = [
   'dashboard', 'clients', 'deals', 'calendar', 'finance', 'stock',
   'settings', 'messages', 'bot', 'integrations', 'backup',
@@ -77,17 +78,31 @@ function doPost(event) {
     try {
       const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
       const acceptedIds = [];
+      const conflicts = [];
+      const revisions = parseProperty_(CRM_REVISIONS_PROPERTY, {});
       request.changes.forEach((change) => {
         if (!change || !change.id) return;
         if (alreadyProcessed_(spreadsheet, String(change.id))) {
           acceptedIds.push(String(change.id));
           return;
         }
+        const payload = change.payload || {};
+        const scope = revisionScope_(payload.scope);
+        const suppliedRevision = payload.baseRevision;
+        const currentRevision = Number(revisions[scope] || 0);
+        if (suppliedRevision !== undefined && Number(suppliedRevision) !== currentRevision) {
+          conflicts.push({
+            id: String(change.id), scope: scope, serverRevision: currentRevision,
+          });
+          return;
+        }
         applyChange_(spreadsheet, change);
         appendAudit_(spreadsheet, change);
+        revisions[scope] = currentRevision + 1;
         acceptedIds.push(String(change.id));
       });
-      return json_({acceptedIds: acceptedIds});
+      saveProperty_(CRM_REVISIONS_PROPERTY, revisions);
+      return json_({acceptedIds: acceptedIds, conflicts: conflicts, revisions: revisions});
     } finally {
       lock.releaseLock();
     }
@@ -255,6 +270,12 @@ function configuration_() {
   return parseProperty_(CRM_CONFIGURATION_PROPERTY, {});
 }
 
+function revisionScope_(scope) {
+  const value = String(scope || '');
+  return value === 'dashboardNotes' || value === 'revenuePlans'
+    ? 'workspace' : value;
+}
+
 function dataSources_(configuration) {
   const sources = {
     deals: 'Август',
@@ -360,9 +381,21 @@ function migrateConfiguration_(session, request) {
   if (!config || typeof config !== 'object') throw new Error('Некорректная конфигурация.');
   const previousSecrets = parseProperty_(CRM_SECRETS_PROPERTY, {});
   const previousConfig = configuration_();
+  const previousSources = previousConfig.dataSources && typeof previousConfig.dataSources === 'object'
+    ? previousConfig.dataSources : {};
+  const incomingSources = config.dataSources && typeof config.dataSources === 'object'
+    ? config.dataSources : {};
+  const mergedSources = Object.assign({}, previousSources, incomingSources);
+  // Старые клиенты знают только CRM_Appointments. После выбора владельцем
+  // общего Google Calendar такой клиент не должен молча переключить всю CRM
+  // обратно на локальный лист и скрыть записи на остальных устройствах.
+  if (String(previousSources.appointments || '').toLowerCase() === 'google_calendar' &&
+      String(incomingSources.appointments || '').toLowerCase() !== 'google_calendar') {
+    mergedSources.appointments = 'google_calendar';
+  }
   const publicConfig = {
     sheetUrl: String(config.sheetUrl || previousConfig.sheetUrl || ''),
-    dataSources: dataSources_(config),
+    dataSources: dataSources_(Object.assign({}, previousConfig, config, {dataSources: mergedSources})),
     calendarId: String(config.calendarId || previousConfig.calendarId || 'primary'),
     calendarName: String(config.calendarName || previousConfig.calendarName || 'Основной календарь'),
     aiSettings: Object.keys(config.aiSettings || {}).length ? config.aiSettings : (previousConfig.aiSettings || {}),
@@ -442,6 +475,86 @@ function calendarFetch_(url, options, secrets, config) {
   return UrlFetchApp.fetch(url, Object.assign({}, request, {headers: headers}));
 }
 
+function avitoAccount_(secrets, key) {
+  const accounts = Array.isArray(secrets.avitoAccounts) ? secrets.avitoAccounts : [];
+  const wanted = String(key || '');
+  const account = accounts.filter((item) => String(item.key || '') === wanted)[0] ||
+    (accounts.length === 1 ? accounts[0] : null);
+  if (!account) throw new Error('Avito-аккаунт не настроен владельцем.');
+  if (!String(account.clientId || '').trim() || !String(account.clientSecret || '').trim()) {
+    throw new Error('В настройке Avito отсутствует Client ID или Client secret.');
+  }
+  return account;
+}
+
+function avitoAccessToken_(account) {
+  const key = 'crm-avito-token-' + Utilities.base64EncodeWebSafe(String(account.key || account.clientId)).substring(0, 80);
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const tokenResponse = UrlFetchApp.fetch('https://api.avito.ru/token', {
+    method: 'post',
+    contentType: 'application/x-www-form-urlencoded',
+    payload: {
+      grant_type: 'client_credentials',
+      client_id: String(account.clientId),
+      client_secret: String(account.clientSecret),
+    },
+    muteHttpExceptions: true,
+  });
+  if (tokenResponse.getResponseCode() !== 200) {
+    throw new Error('Avito не выдал токен доступа. Проверьте Client ID и Client secret.');
+  }
+  let tokenBody;
+  try { tokenBody = JSON.parse(tokenResponse.getContentText()); } catch (_) { tokenBody = {}; }
+  const token = String(tokenBody.access_token || '');
+  if (!token) throw new Error('Avito не вернул токен доступа.');
+  const ttl = Math.max(60, Math.min(Number(tokenBody.expires_in || 3600) - 60, 3300));
+  cache.put(key, token, ttl);
+  return token;
+}
+
+function avitoProxy_(input, secrets) {
+  const url = String(input.url || '');
+  if (!/^https:\/\/api\.avito\.ru(?:\/|$)/.test(url)) {
+    throw new Error('CRM-сервер принимает только запросы к api.avito.ru.');
+  }
+  const method = String(input.method || 'GET').toLowerCase();
+  if (['get', 'post', 'put', 'patch', 'delete'].indexOf(method) === -1) {
+    throw new Error('Неподдерживаемый метод Avito.');
+  }
+  const account = avitoAccount_(secrets, input.accountKey);
+  const token = avitoAccessToken_(account);
+  const request = {
+    method: method,
+    headers: {
+      Authorization: 'Bearer ' + token,
+      Accept: 'application/json, audio/mpeg, audio/wav, */*',
+      'Content-Type': String(input.contentType || 'application/json'),
+    },
+    muteHttpExceptions: true,
+  };
+  if (input.body !== undefined && input.body !== null && String(input.body) !== '') {
+    request.payload = String(input.body);
+  }
+  let response = UrlFetchApp.fetch(url, request);
+  if (response.getResponseCode() === 401) {
+    const cache = CacheService.getScriptCache();
+    const key = 'crm-avito-token-' + Utilities.base64EncodeWebSafe(String(account.key || account.clientId)).substring(0, 80);
+    cache.remove(key);
+    request.headers.Authorization = 'Bearer ' + avitoAccessToken_(account);
+    response = UrlFetchApp.fetch(url, request);
+  }
+  return {
+    ok: true,
+    body: {
+      status: response.getResponseCode(),
+      bodyText: response.getContentText(),
+      contentType: String(response.getHeaders()['Content-Type'] || 'application/json'),
+    },
+  };
+}
+
 function integrationProxy_(session, request) {
   const action = String((request.request || {}).action || '');
   const area = action.indexOf('calendar') === 0 ? 'calendar' :
@@ -453,6 +566,7 @@ function integrationProxy_(session, request) {
   const config = configuration_();
   // Ключи остаются в Script Properties. Этот endpoint возвращает только
   // полезный ответ поставщика и никогда не сериализует CRM_SECRETS.
+  if (action === 'avito.request') return avitoProxy_(input, secrets);
   if (action === 'calendar.list') {
     const response = calendarFetch_(
       'https://www.googleapis.com/calendar/v3/users/me/calendarList',
@@ -562,6 +676,7 @@ function readWorkspace_(request) {
   const manual = readRowsSheet_(spreadsheet, 'CRM_ManualDeals');
   return json_({
     schemaVersion: CRM_SCHEMA_VERSION,
+    revisions: parseProperty_(CRM_REVISIONS_PROPERTY, {}),
     workspace: {
       clients: readObjectSheet_(spreadsheet, 'CRM_Clients'),
       stockItems: readObjectSheet_(spreadsheet, 'CRM_Stock'),

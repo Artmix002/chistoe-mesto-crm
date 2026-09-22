@@ -69,7 +69,7 @@ class SheetsRepository {
   /// Loads the protected CRM_* workspace snapshot. This is deliberately
   /// unavailable through public CSV: another computer restores operational
   /// data only after it has the same protected endpoint and secret.
-  Future<Map<String, dynamic>?> readWorkspace({
+  Future<WorkspaceSnapshot?> readWorkspace({
     RequestCancellation? cancellation,
   }) async {
     final endpoint = protectedEndpoint;
@@ -100,8 +100,26 @@ class SheetsRepository {
       throw StateError('Защищённое чтение CRM: $error');
     }
     final workspace = decoded['workspace'];
-    return workspace is Map ? Map<String, dynamic>.from(workspace) : null;
+    if (workspace is! Map) return null;
+    final revisions = decoded['revisions'];
+    return WorkspaceSnapshot(
+      workspace: Map<String, dynamic>.from(workspace),
+      revisions: revisions is Map
+          ? revisions.map(
+              (key, value) => MapEntry(
+                key.toString(),
+                (value as num?)?.toInt() ?? int.tryParse(value.toString()) ?? 0,
+              ),
+            )
+          : const {},
+    );
   }
+}
+
+class WorkspaceSnapshot {
+  const WorkspaceSnapshot({required this.workspace, required this.revisions});
+  final Map<String, dynamic> workspace;
+  final Map<String, int> revisions;
 }
 
 class LocalRepository {
@@ -113,8 +131,16 @@ class LocalRepository {
 }
 
 class ChangesPushResult {
-  const ChangesPushResult({required this.acceptedIds});
+  const ChangesPushResult({
+    required this.acceptedIds,
+    required this.revisions,
+    this.conflictIds = const [],
+    this.conflictScopes = const [],
+  });
   final List<String> acceptedIds;
+  final Map<String, int> revisions;
+  final List<String> conflictIds;
+  final List<String> conflictScopes;
 }
 
 /// Отправляет изменения в защищённый backend. Google Sheets остаётся источником
@@ -189,6 +215,35 @@ class ChangesSyncRepository {
         .map((id) => id.toString())
         .where(queuedIds.contains)
         .toList(growable: false);
-    return ChangesPushResult(acceptedIds: acceptedIds);
+    final conflicts = decoded['conflicts'];
+    final conflictIds = conflicts is List
+        ? conflicts
+              .whereType<Map>()
+              .map((item) => item['id']?.toString() ?? '')
+              .where(queuedIds.contains)
+              .toList(growable: false)
+        : const <String>[];
+    final conflictScopes = conflicts is List
+        ? conflicts
+              .whereType<Map>()
+              .map((item) => item['scope']?.toString() ?? '')
+              .where((scope) => scope.isNotEmpty)
+              .toSet()
+              .toList(growable: false)
+        : const <String>[];
+    final revisions = decoded['revisions'];
+    return ChangesPushResult(
+      acceptedIds: acceptedIds,
+      conflictIds: conflictIds,
+      conflictScopes: conflictScopes,
+      revisions: revisions is Map
+          ? revisions.map(
+              (key, value) => MapEntry(
+                key.toString(),
+                (value as num?)?.toInt() ?? int.tryParse(value.toString()) ?? 0,
+              ),
+            )
+          : const {},
+    );
   }
 }
