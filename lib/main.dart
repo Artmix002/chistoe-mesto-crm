@@ -672,6 +672,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       });
       dataSources = nextSources;
     }
+    if (configuration['serverManagedSecrets'] == true) {
+      unawaited(prefs.setBool('crm_server_managed_secrets', true));
+    }
     final configuredMessengers = configuration['messengers'];
     if (configuredMessengers is Map) {
       configuredMessengers.forEach((key, value) {
@@ -708,6 +711,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     }
     syncEndpoint = _serverEndpoint?.toString() ?? syncEndpoint;
     syncToken = session.token;
+    calendarConnected = _usesGoogleCalendar;
+    if (_usesGoogleCalendar) unawaited(_loadCalendarEvents());
   }
 
   String _dataSource(String key, String fallback) =>
@@ -718,7 +723,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   bool get _usesGoogleCalendar =>
       _dataSource('appointments', 'CRM_Appointments').toLowerCase() ==
           'google_calendar' &&
-      calendarAccessToken != null;
+      (_session != null || calendarAccessToken != null);
+
+  bool get _usesServerCalendarProxy =>
+      _usesGoogleCalendar && _authService != null && _session != null;
 
   Future<void> _login(String userId, String pin) async {
     final service = _authService;
@@ -898,6 +906,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       'calendarAccessToken': calendarAccessToken ?? '',
       'calendarRefreshToken': calendarRefreshToken ?? '',
       'calendarClientSecret': calendarClientSecret,
+      'calendarClientId': AppConfig.googleClientId,
       'calendarId': calendarId,
       'calendarName': calendarName,
       'aiApiKey': aiApiKey,
@@ -927,6 +936,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         dataSources = configuredSources.map(
           (key, value) => MapEntry(key.toString(), value.toString()),
         );
+      }
+      if (serverConfig['serverManagedSecrets'] == true) {
+        await prefs.setBool('crm_server_managed_secrets', true);
       }
       if (clearLocalSecrets) await _clearLocalIntegrationSecrets();
       _serverConfigurationInitialized = true;
@@ -4034,7 +4046,7 @@ $instructions
         closedAccountingPeriod = closedAccountingPeriods.last;
       }
       final cloudAppointments = objects('appointments');
-      if (cloud.containsKey('appointments') && calendarAccessToken == null) {
+      if (cloud.containsKey('appointments') && !_usesGoogleCalendar) {
         calendarEvents = cloudAppointments;
       }
       final cloudCatalog = objects('serviceCatalog');
@@ -4692,8 +4704,13 @@ $instructions
         setState(() {
           calendarConnected = true;
           calendarStatus = 'Календарь подключён. Загружаю записи…';
+          dataSources = {...dataSources, 'appointments': 'google_calendar'};
         });
       }
+      // OAuth выполняет только владелец, после чего токены остаются на
+      // Apps Script. Остальные устройства получают общий источник календаря
+      // из серверной конфигурации и не подключают Google по отдельности.
+      await _migrateLocalConfiguration(clearLocalSecrets: false, silent: true);
       await _loadCalendarList();
       await _loadCalendarEvents();
       _audit('Подключена интеграция', 'Интеграция', 'Google Календарь');
@@ -4860,6 +4877,21 @@ $instructions
   }
 
   Future<void> _loadCalendarList() async {
+    if (_usesServerCalendarProxy) {
+      try {
+        final payload = await _proxyIntegration('calendar.list', const {});
+        final items = payload['items'] as List? ?? const [];
+        if (mounted) {
+          setState(
+            () => availableCalendars = items
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList(),
+          );
+        }
+      } catch (_) {}
+      return;
+    }
     final access = calendarAccessToken;
     if (access == null) return;
     try {
@@ -4934,6 +4966,7 @@ $instructions
     calendarName = selected['summary']?.toString() ?? 'Календарь';
     await prefs.setString('calendar_id', calendarId);
     await prefs.setString('calendar_name', calendarName);
+    await _migrateLocalConfiguration(clearLocalSecrets: false, silent: true);
     if (mounted) {
       setState(() => calendarStatus = 'Выбран календарь: $calendarName');
     }
@@ -4941,48 +4974,52 @@ $instructions
   }
 
   Future<void> _loadCalendarEvents() async {
-    final access = calendarAccessToken;
-    if (access == null) return;
+    if (!_usesGoogleCalendar) return;
     if (mounted) setState(() => calendarLoading = true);
     try {
       final start = DateTime.now()
           .subtract(const Duration(days: 1))
           .toUtc()
           .toIso8601String();
-      final uri = Uri.parse(
-        'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events?maxResults=100&singleEvents=true&orderBy=startTime&timeMin=${Uri.encodeQueryComponent(start)}',
-      );
-      var res = await _apiClient.get(
-        uri,
-        headers: {'Authorization': 'Bearer $access'},
-      );
-      if (res.statusCode == 401) {
-        if (await _refreshCalendarAccessToken()) {
+      List<dynamic> items;
+      if (_usesServerCalendarProxy) {
+        final payload = await _proxyIntegration('calendar.read', {
+          'timeMin': start,
+          'maxResults': 250,
+        });
+        items = payload['items'] as List? ?? const [];
+      } else {
+        final access = calendarAccessToken;
+        if (access == null) return;
+        final uri = Uri.parse(
+          'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events?maxResults=250&singleEvents=true&orderBy=startTime&timeMin=${Uri.encodeQueryComponent(start)}',
+        );
+        var res = await _apiClient.get(
+          uri,
+          headers: {'Authorization': 'Bearer $access'},
+        );
+        if (res.statusCode == 401 && await _refreshCalendarAccessToken()) {
           res = await _apiClient.get(
             uri,
             headers: {'Authorization': 'Bearer $calendarAccessToken'},
           );
         }
-      }
-      if (res.statusCode == 401) {
-        await secretStore.delete('calendar_access_token');
-        await secretStore.delete('calendar_refresh_token');
-        await prefs.remove('calendar_access_token');
-        await prefs.remove('calendar_refresh_token');
-        if (mounted) {
-          setState(() {
-            calendarAccessToken = null;
-            calendarRefreshToken = null;
-            calendarConnected = false;
-            calendarStatus =
-                'Срок доступа закончился. Подключите календарь снова.';
-          });
+        if (res.statusCode == 401) {
+          if (mounted) {
+            setState(() {
+              calendarConnected = false;
+              calendarStatus =
+                  'Срок доступа закончился. Подключите календарь снова.';
+            });
+          }
+          return;
         }
-        return;
+        if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        items = decoded['items'] as List? ?? const [];
       }
-      if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-      final items = (jsonDecode(res.body)['items'] as List? ?? []).cast<Map>();
       final loadedEvents = items
+          .whereType<Map>()
           .map((event) => Map<String, dynamic>.from(event))
           .toList();
       final loadedIds = loadedEvents
@@ -5005,7 +5042,9 @@ $instructions
       if (mounted) {
         setState(() {
           calendarEvents = loadedEvents;
-          calendarStatus = 'Календарь подключён. Записей: ${items.length}';
+          calendarConnected = true;
+          calendarStatus =
+              'Календарь подключён. Записей: ${loadedEvents.length}';
         });
       }
       await prefs.setString(
@@ -5019,10 +5058,12 @@ $instructions
         }
         await _sendVkAppointmentsSummary();
       }
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         setState(
-          () => calendarStatus = 'Не удалось загрузить записи календаря.',
+          () => calendarStatus = _usesServerCalendarProxy
+              ? 'Не удалось загрузить записи через CRM-сервер: ${_safeAuthError(error)}'
+              : 'Не удалось загрузить записи календаря.',
         );
       }
     } finally {
@@ -5417,6 +5458,61 @@ $instructions
       }
     } catch (_) {}
     return 'Не удалось сохранить запись. Код Google: ${response.statusCode}.';
+  }
+
+  Future<Map<String, dynamic>> _writeGoogleCalendarEvent({
+    required String method,
+    String? eventId,
+    Map<String, dynamic> body = const {},
+  }) async {
+    if (_usesServerCalendarProxy) {
+      return _proxyIntegration('calendar.write', {
+        'method': method,
+        if (eventId != null && eventId.isNotEmpty) 'eventId': eventId,
+        'body': body,
+      });
+    }
+    final access = calendarAccessToken;
+    if (access == null || access.isEmpty) {
+      throw StateError('Google Календарь не подключён.');
+    }
+    final base =
+        'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events';
+    final suffix = eventId == null || eventId.isEmpty
+        ? ''
+        : '/${Uri.encodeComponent(eventId)}';
+    Future<http.Response> request() {
+      final uri = Uri.parse('$base$suffix');
+      final headers = {
+        'Authorization': 'Bearer $calendarAccessToken',
+        'Content-Type': 'application/json',
+      };
+      return switch (method.toUpperCase()) {
+        'POST' => _apiClient.post(
+          uri,
+          headers: headers,
+          body: jsonEncode(body),
+        ),
+        'PATCH' => _apiClient.patch(
+          uri,
+          headers: headers,
+          body: jsonEncode(body),
+        ),
+        'DELETE' => _apiClient.delete(uri, headers: headers),
+        _ => throw ArgumentError.value(method, 'method'),
+      };
+    }
+
+    var response = await request();
+    if (response.statusCode == 401 && await _refreshCalendarAccessToken()) {
+      response = await request();
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(_googleCalendarError(response));
+    }
+    if (response.body.trim().isEmpty) return const {};
+    final decoded = jsonDecode(response.body);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : const {};
   }
 
   Future<void> _editCalendarEvent([Map<String, dynamic>? event]) async {
@@ -6109,126 +6205,95 @@ $instructions
       }
       return;
     }
-    final base =
-        'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events';
-    final uri = Uri.parse(
-      id == null ? base : '$base/${Uri.encodeComponent(id)}',
-    );
     try {
-      Future<http.Response> saveRequest() => id == null
-          ? _apiClient.post(
-              uri,
-              headers: {
-                'Authorization': 'Bearer $calendarAccessToken',
-                'Content-Type': 'application/json',
-              },
-              body: body,
-            )
-          : _apiClient.patch(
-              uri,
-              headers: {
-                'Authorization': 'Bearer $calendarAccessToken',
-                'Content-Type': 'application/json',
-              },
-              body: body,
-            );
-      var res = await saveRequest();
-      if (res.statusCode == 401 && await _refreshCalendarAccessToken()) {
-        res = await saveRequest();
-      }
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final saved = jsonDecode(res.body) as Map<String, dynamic>;
-        if (mounted) {
-          setState(() {
-            calendarViewDate = DateTime(when.year, when.month);
-            selectedCalendarDay = DateTime(when.year, when.month, when.day);
-            final savedId = saved['id']?.toString();
-            if (savedId != null) {
-              final index = calendarEvents.indexWhere(
-                (item) => item['id']?.toString() == savedId,
-              );
-              if (index >= 0) {
-                calendarEvents[index] = saved;
-              } else {
-                calendarEvents.add(saved);
-              }
-            }
-            calendarStatus =
-                'Запись сохранена в «$calendarName». Обновляю календарь…';
-          });
-        }
-        _audit(id == null ? 'Создана' : 'Изменена', 'Запись', name.text.trim());
-        await _loadCalendarEvents();
-        String? vkError;
-        if (id == null) {
-          _lastVkMessageId = null;
-          vkError = await _notifyVkAboutAppointment(
-            when: when,
-            name: name.text,
-            source: source.text,
-            car: car.text,
-            service: service.text,
-            cost: totalCost > 0 ? totalCost.toStringAsFixed(0) : cost.text,
-            phone: phone.text,
-            note: note.text,
-            items: itemsText,
-            performer: performer.text,
-          );
-          final savedId = saved['id']?.toString();
-          if (vkError == null && savedId != null && _lastVkMessageId != null) {
-            await _rememberVkAppointmentMessage(savedId);
-          }
-        } else if (status != 'Записан' && status != originalStatus) {
-          await _removeVkAppointmentMessage(id);
-        } else if (status == 'Записан') {
-          // Перенос/изменение записи: старое уведомление заменяется новым.
-          await _removeVkAppointmentMessage(id);
-          _lastVkMessageId = null;
-          vkError = await _notifyVkAboutAppointment(
-            when: when,
-            name: name.text,
-            source: source.text,
-            car: car.text,
-            service: service.text,
-            cost: totalCost > 0 ? totalCost.toStringAsFixed(0) : cost.text,
-            phone: phone.text,
-            note: note.text,
-            items: itemsText,
-            performer: performer.text,
-          );
-          if (vkError == null && _lastVkMessageId != null) {
-            await _rememberVkAppointmentMessage(id);
-          }
-        }
-        await _sendVkAppointmentsSummary();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                vkError == null
-                    ? 'Запись добавлена в Google Календарь'
-                    : 'Запись сохранена, но ВК: $vkError',
-              ),
-            ),
-          );
-        }
-      } else {
-        final error = _googleCalendarError(res);
-        if (mounted) {
-          setState(() => calendarStatus = error);
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(error)));
-        }
-      }
-    } catch (_) {
+      final saved = await _writeGoogleCalendarEvent(
+        method: id == null ? 'POST' : 'PATCH',
+        eventId: id,
+        body: Map<String, dynamic>.from(jsonDecode(body) as Map),
+      );
       if (mounted) {
-        const error =
-            'Нет соединения с Google Календарём. Проверьте интернет и повторите.';
-        setState(() => calendarStatus = error);
+        setState(() {
+          calendarViewDate = DateTime(when.year, when.month);
+          selectedCalendarDay = DateTime(when.year, when.month, when.day);
+          final savedId = saved['id']?.toString();
+          if (savedId != null) {
+            final index = calendarEvents.indexWhere(
+              (item) => item['id']?.toString() == savedId,
+            );
+            if (index >= 0) {
+              calendarEvents[index] = saved;
+            } else {
+              calendarEvents.add(saved);
+            }
+          }
+          calendarStatus =
+              'Запись сохранена в «$calendarName». Обновляю календарь…';
+        });
+      }
+      _audit(id == null ? 'Создана' : 'Изменена', 'Запись', name.text.trim());
+      await _loadCalendarEvents();
+      String? vkError;
+      if (id == null) {
+        _lastVkMessageId = null;
+        vkError = await _notifyVkAboutAppointment(
+          when: when,
+          name: name.text,
+          source: source.text,
+          car: car.text,
+          service: service.text,
+          cost: totalCost > 0 ? totalCost.toStringAsFixed(0) : cost.text,
+          phone: phone.text,
+          note: note.text,
+          items: itemsText,
+          performer: performer.text,
+        );
+        final savedId = saved['id']?.toString();
+        if (vkError == null && savedId != null && _lastVkMessageId != null) {
+          await _rememberVkAppointmentMessage(savedId);
+        }
+      } else if (status != 'Записан' && status != originalStatus) {
+        await _removeVkAppointmentMessage(id);
+      } else if (status == 'Записан') {
+        // Перенос/изменение записи: старое уведомление заменяется новым.
+        await _removeVkAppointmentMessage(id);
+        _lastVkMessageId = null;
+        vkError = await _notifyVkAboutAppointment(
+          when: when,
+          name: name.text,
+          source: source.text,
+          car: car.text,
+          service: service.text,
+          cost: totalCost > 0 ? totalCost.toStringAsFixed(0) : cost.text,
+          phone: phone.text,
+          note: note.text,
+          items: itemsText,
+          performer: performer.text,
+        );
+        if (vkError == null && _lastVkMessageId != null) {
+          await _rememberVkAppointmentMessage(id);
+        }
+      }
+      await _sendVkAppointmentsSummary();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              vkError == null
+                  ? 'Запись добавлена в Google Календарь'
+                  : 'Запись сохранена, но ВК: $vkError',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        final message = error is StateError
+            ? error.message.toString()
+            : 'Нет соединения с Google Календарём. Проверьте интернет и повторите.';
+        setState(() => calendarStatus = message);
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text(error)));
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
@@ -6266,19 +6331,8 @@ $instructions
       await _sendVkAppointmentsSummary();
       return;
     }
-    final base =
-        'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events';
-    var res = await _apiClient.delete(
-      Uri.parse('$base/${Uri.encodeComponent(id)}'),
-      headers: {'Authorization': 'Bearer $calendarAccessToken'},
-    );
-    if (res.statusCode == 401 && await _refreshCalendarAccessToken()) {
-      res = await _apiClient.delete(
-        Uri.parse('$base/${Uri.encodeComponent(id)}'),
-        headers: {'Authorization': 'Bearer $calendarAccessToken'},
-      );
-    }
-    if (res.statusCode == 204) {
+    try {
+      await _writeGoogleCalendarEvent(method: 'DELETE', eventId: id);
       calendarEvents.removeWhere((item) => item['id']?.toString() == id);
       archivedCalendarEvents.add({
         ...event,
@@ -6294,6 +6348,15 @@ $instructions
       );
       await _loadCalendarEvents();
       await _sendVkAppointmentsSummary();
+    } catch (error) {
+      if (mounted) {
+        final message = error is StateError
+            ? error.message.toString()
+            : 'Не удалось удалить запись из Google Календаря.';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
     }
   }
 
@@ -6472,28 +6535,34 @@ $instructions
       return;
     }
     final id = event['id']?.toString();
-    if (id == null || calendarAccessToken == null) return;
-    final uri = Uri.parse(
-      'https://www.googleapis.com/calendar/v3/calendars/${Uri.encodeComponent(calendarId)}/events/${Uri.encodeComponent(id)}',
-    );
-    final response = await _apiClient.patch(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $calendarAccessToken',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'start': {'dateTime': _moscowIso(shifted), 'timeZone': 'Europe/Moscow'},
-        'end': {
-          'dateTime': _moscowIso(
-            shifted.add(Duration(minutes: (hours * 60).round())),
-          ),
-          'timeZone': 'Europe/Moscow',
+    if (id == null) return;
+    try {
+      await _writeGoogleCalendarEvent(
+        method: 'PATCH',
+        eventId: id,
+        body: {
+          'start': {
+            'dateTime': _moscowIso(shifted),
+            'timeZone': 'Europe/Moscow',
+          },
+          'end': {
+            'dateTime': _moscowIso(
+              shifted.add(Duration(minutes: (hours * 60).round())),
+            ),
+            'timeZone': 'Europe/Moscow',
+          },
         },
-      }),
-    );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
+      );
       await _loadCalendarEvents();
+    } catch (error) {
+      if (mounted) {
+        final message = error is StateError
+            ? error.message.toString()
+            : 'Не удалось перенести запись.';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
     }
   }
 

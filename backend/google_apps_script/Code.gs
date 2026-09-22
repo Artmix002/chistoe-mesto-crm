@@ -359,31 +359,87 @@ function migrateConfiguration_(session, request) {
   const config = request.configuration;
   if (!config || typeof config !== 'object') throw new Error('Некорректная конфигурация.');
   const previousSecrets = parseProperty_(CRM_SECRETS_PROPERTY, {});
+  const previousConfig = configuration_();
   const publicConfig = {
-    sheetUrl: String(config.sheetUrl || ''),
+    sheetUrl: String(config.sheetUrl || previousConfig.sheetUrl || ''),
     dataSources: dataSources_(config),
-    calendarId: String(config.calendarId || 'primary'),
-    calendarName: String(config.calendarName || 'Основной календарь'),
-    aiSettings: config.aiSettings || {},
-    messengers: config.messengers || {},
-    messengerAccounts: config.messengerAccounts || {},
-    vkNotificationPeer: String(config.vkNotificationPeer || ''),
-    avitoAccounts: (config.avitoAccounts || []).map((item) => ({
+    calendarId: String(config.calendarId || previousConfig.calendarId || 'primary'),
+    calendarName: String(config.calendarName || previousConfig.calendarName || 'Основной календарь'),
+    aiSettings: Object.keys(config.aiSettings || {}).length ? config.aiSettings : (previousConfig.aiSettings || {}),
+    messengers: Object.keys(config.messengers || {}).length ? config.messengers : (previousConfig.messengers || {}),
+    messengerAccounts: Object.keys(config.messengerAccounts || {}).length ? config.messengerAccounts : (previousConfig.messengerAccounts || {}),
+    vkNotificationPeer: String(config.vkNotificationPeer || previousConfig.vkNotificationPeer || ''),
+    serverManagedSecrets: true,
+    avitoAccounts: (config.avitoAccounts || previousConfig.avitoAccounts || []).map((item) => ({
       key: item.key || '', name: item.name || 'Avito', userId: item.userId || '',
     })),
   };
+  const firstNonEmpty_ = (value, fallback) => {
+    const text = String(value === undefined || value === null ? '' : value);
+    return text.trim() ? text : String(fallback || '');
+  };
+  const previousAvitoAccounts = Array.isArray(previousSecrets.avitoAccounts)
+    ? previousSecrets.avitoAccounts : [];
+  const incomingAvitoAccounts = Array.isArray(config.avitoAccounts)
+    ? config.avitoAccounts : [];
+  const mergedAvitoAccounts = (incomingAvitoAccounts.length ? incomingAvitoAccounts : previousAvitoAccounts)
+    .map((item) => {
+      const key = String(item.key || '');
+      const previous = previousAvitoAccounts.filter((candidate) => String(candidate.key || '') === key)[0] || {};
+      return Object.assign({}, previous, item, {
+        clientSecret: firstNonEmpty_(item.clientSecret, previous.clientSecret),
+      });
+    });
   const secretConfig = {
-    syncToken: String(config.syncToken || ''),
-    calendarAccessToken: String(config.calendarAccessToken || ''),
-    calendarRefreshToken: String(config.calendarRefreshToken || ''),
-    calendarClientSecret: String(config.calendarClientSecret || ''),
-    aiApiKey: String(config.aiApiKey || ''),
+    syncToken: firstNonEmpty_(config.syncToken, previousSecrets.syncToken),
+    calendarClientId: firstNonEmpty_(config.calendarClientId, previousSecrets.calendarClientId),
+    calendarAccessToken: firstNonEmpty_(config.calendarAccessToken, previousSecrets.calendarAccessToken),
+    calendarRefreshToken: firstNonEmpty_(config.calendarRefreshToken, previousSecrets.calendarRefreshToken),
+    calendarClientSecret: firstNonEmpty_(config.calendarClientSecret, previousSecrets.calendarClientSecret),
+    aiApiKey: firstNonEmpty_(config.aiApiKey, previousSecrets.aiApiKey),
     messengerTokens: Object.assign({}, previousSecrets.messengerTokens || {}, config.messengerTokens || {}),
-    avitoAccounts: config.avitoAccounts || [],
+    avitoAccounts: mergedAvitoAccounts,
   };
   saveProperty_(CRM_CONFIGURATION_PROPERTY, publicConfig);
   saveProperty_(CRM_SECRETS_PROPERTY, secretConfig);
   return {ok: true, configuration: publicConfig};
+}
+
+function calendarFetch_(url, options, secrets, config) {
+  const headers = Object.assign({}, (options && options.headers) || {});
+  const access = String(secrets.calendarAccessToken || '');
+  if (!access) throw new Error('Google Календарь ещё не подключён владельцем.');
+  headers.Authorization = 'Bearer ' + access;
+  const request = Object.assign({}, options || {}, {headers: headers, muteHttpExceptions: true});
+  let response = UrlFetchApp.fetch(url, request);
+  if (response.getResponseCode() !== 401) return response;
+
+  const refresh = String(secrets.calendarRefreshToken || '');
+  const clientId = String(secrets.calendarClientId || config.calendarClientId || '');
+  const clientSecret = String(secrets.calendarClientSecret || '');
+  if (!refresh || !clientId) return response;
+  const refreshResponse = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post',
+    contentType: 'application/x-www-form-urlencoded',
+    payload: {
+      client_id: clientId,
+      refresh_token: refresh,
+      grant_type: 'refresh_token',
+      ...(clientSecret ? {client_secret: clientSecret} : {}),
+    },
+    muteHttpExceptions: true,
+  });
+  if (refreshResponse.getResponseCode() < 200 || refreshResponse.getResponseCode() >= 300) {
+    return response;
+  }
+  let refreshed;
+  try { refreshed = JSON.parse(refreshResponse.getContentText()); } catch (_) { return response; }
+  const nextAccess = String(refreshed.access_token || '');
+  if (!nextAccess) return response;
+  secrets.calendarAccessToken = nextAccess;
+  saveProperty_(CRM_SECRETS_PROPERTY, secrets);
+  headers.Authorization = 'Bearer ' + nextAccess;
+  return UrlFetchApp.fetch(url, Object.assign({}, request, {headers: headers}));
 }
 
 function integrationProxy_(session, request) {
@@ -397,26 +453,33 @@ function integrationProxy_(session, request) {
   const config = configuration_();
   // Ключи остаются в Script Properties. Этот endpoint возвращает только
   // полезный ответ поставщика и никогда не сериализует CRM_SECRETS.
+  if (action === 'calendar.list') {
+    const response = calendarFetch_(
+      'https://www.googleapis.com/calendar/v3/users/me/calendarList',
+      {}, secrets, config,
+    );
+    return providerResponse_(response);
+  }
   if (action === 'calendar.read') {
-    const access = String(secrets.calendarAccessToken || '');
-    if (!access) throw new Error('Google Календарь ещё не подключён владельцем.');
     const calendarId = encodeURIComponent(String(config.calendarId || 'primary'));
+    const timeMin = input.timeMin ? '&timeMin=' + encodeURIComponent(String(input.timeMin)) : '';
+    const timeMax = input.timeMax ? '&timeMax=' + encodeURIComponent(String(input.timeMax)) : '';
+    const maxResults = Math.min(Math.max(Number(input.maxResults || 250), 1), 2500);
     const url = 'https://www.googleapis.com/calendar/v3/calendars/' + calendarId +
-      '/events?singleEvents=true&orderBy=startTime&maxResults=250';
-    const response = UrlFetchApp.fetch(url, {headers: {Authorization: 'Bearer ' + access}, muteHttpExceptions: true});
+      '/events?singleEvents=true&orderBy=startTime&maxResults=' + maxResults + timeMin + timeMax;
+    const response = calendarFetch_(url, {}, secrets, config);
     return providerResponse_(response);
   }
   if (action === 'calendar.write') {
-    const access = String(secrets.calendarAccessToken || '');
     const method = String(input.method || 'POST').toUpperCase();
     const eventId = input.eventId ? '/' + encodeURIComponent(String(input.eventId)) : '';
     const calendarId = encodeURIComponent(String(config.calendarId || 'primary'));
     const url = 'https://www.googleapis.com/calendar/v3/calendars/' + calendarId + '/events' + eventId;
-    const response = UrlFetchApp.fetch(url, {
+    const response = calendarFetch_(url, {
       method: method,
-      headers: {Authorization: 'Bearer ' + access, 'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json'},
       payload: JSON.stringify(input.body || {}), muteHttpExceptions: true,
-    });
+    }, secrets, config);
     return providerResponse_(response);
   }
   if (action === 'message.telegram') {
@@ -699,6 +762,7 @@ function parseScalar_(value) {
 
 function replaceRowsSheet_(spreadsheet, name, rows) {
   const sheet = getOrCreateSheet_(spreadsheet, name);
+  backupSheetBeforeReplace_(spreadsheet, sheet, name);
   sheet.clearContents();
   if (!rows.length) return;
   const width = rows.reduce((maximum, row) => Math.max(maximum, row.length), 1);
@@ -709,6 +773,21 @@ function replaceRowsSheet_(spreadsheet, name, rows) {
   });
   sheet.getRange(1, 1, values.length, width).setValues(values);
   sheet.setFrozenRows(1);
+}
+
+// Снимки приходят с нескольких устройств. Перед заменой оставляем последнюю
+// полную копию каждого CRM-листа: сбой клиента или ошибочная синхронизация не
+// должны превращаться в необратимую очистку данных.
+function backupSheetBeforeReplace_(spreadsheet, sheet, name) {
+  if (!sheet || sheet.getLastRow() === 0 || name.indexOf('CRM_') !== 0) return;
+  const values = sheet.getDataRange().getValues();
+  const backup = getOrCreateSheet_(spreadsheet, name + '_Backup');
+  backup.clearContents();
+  backup.getRange(1, 1, values.length, values[0].length).setValues(values);
+  backup.getRange(1, Math.max(values[0].length + 2, 1)).setValue(
+    'Последняя резервная копия: ' + new Date().toISOString(),
+  );
+  backup.setFrozenRows(1);
 }
 
 function scalar_(value) {
