@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
@@ -9,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'models.dart';
+import 'product_sku.dart';
 import 'app_constants.dart';
 import 'avito_cache.dart';
 import 'config.dart';
@@ -35,6 +37,7 @@ import 'onboarding_logic.dart';
 import 'reconciliation.dart';
 import 'message_queue.dart';
 import 'workspace_models.dart';
+import 'migration_check.dart';
 import 'ai_service.dart';
 import 'widgets/app_sidebar.dart';
 import 'widgets/calendar_components.dart';
@@ -42,6 +45,7 @@ import 'widgets/calendar_workspace.dart';
 import 'widgets/finance_reports.dart';
 import 'oauth_pkce.dart';
 import 'access_control.dart';
+import 'avito_catalog.dart';
 import 'auth_service.dart';
 import 'widgets/offline_status_banner.dart';
 import 'widgets/messenger_connection_card.dart';
@@ -56,6 +60,12 @@ import 'widgets/accounting_table.dart';
 import 'widgets/accounting_categories_dialog.dart';
 import 'widgets/local_operations_list.dart';
 import 'widgets/stock_page.dart';
+import 'widgets/products_page.dart';
+import 'widgets/product_editor_screen.dart';
+import 'products_excel.dart';
+import 'avito_sync_script.dart';
+import 'avito_import.dart';
+import 'widgets/orders_view.dart';
 import 'widgets/deals_kanban_board.dart';
 import 'widgets/deals_grouped_table.dart';
 import 'widgets/client_results_list.dart';
@@ -110,49 +120,190 @@ class _CleanPlaceAppState extends State<CleanPlaceApp> {
       themeAnimationDuration: const Duration(milliseconds: 350),
       themeAnimationCurve: Curves.easeInOutCubic,
       theme: ThemeData(
-        fontFamily: 'Arial',
+        fontFamily: '.SF Pro Text',
         scaffoldBackgroundColor: darkMode
-            ? const Color(0xFF101216)
-            : const Color(0xFFFFF1E4),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFF28C28),
-          brightness: darkMode ? Brightness.dark : Brightness.light,
-        ).copyWith(primary: const Color(0xFFF28C28)),
-        inputDecorationTheme: const InputDecorationTheme(
+            ? const Color(0xFF000000)
+            : const Color(0xFFF2F2F7),
+        colorScheme:
+            ColorScheme.fromSeed(
+              seedColor: const Color(0xFF007AFF),
+              brightness: darkMode ? Brightness.dark : Brightness.light,
+            ).copyWith(
+              primary: const Color(0xFF007AFF),
+              surface: darkMode ? const Color(0xFF1C1C1E) : Colors.white,
+            ),
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          },
+        ),
+        inputDecorationTheme: InputDecorationTheme(
           isDense: true,
+          filled: true,
+          fillColor: darkMode ? const Color(0xFF1C1C1E) : Colors.white,
           floatingLabelBehavior: FloatingLabelBehavior.auto,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(7)),
-            borderSide: BorderSide(color: Color(0xFF4A4F59), width: 0.8),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(7)),
-            borderSide: BorderSide(color: Color(0xFFF28C28), width: 1.2),
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(
+              color: darkMode
+                  ? const Color(0xFF38383A)
+                  : const Color(0xFFC6C6C8),
+              width: 0.6,
+            ),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(7)),
-            borderSide: BorderSide(color: Color(0xFF4A4F59), width: 0.8),
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(
+              color: darkMode
+                  ? const Color(0xFF38383A)
+                  : const Color(0xFFC6C6C8),
+              width: 0.6,
+            ),
           ),
-          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          floatingLabelStyle: TextStyle(color: Color(0xFFF28C28)),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFF007AFF), width: 1.4),
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 13,
+          ),
+          floatingLabelStyle: const TextStyle(color: Color(0xFF007AFF)),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF007AFF),
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFF28C28),
-            side: BorderSide.none,
+            foregroundColor: const Color(0xFF007AFF),
+            side: BorderSide(
+              color: darkMode
+                  ? const Color(0xFF3A3A3C)
+                  : const Color(0xFFD1D1D6),
+              width: 0.8,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w600),
           ),
         ),
         textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(foregroundColor: const Color(0xFFF28C28)),
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xFF007AFF),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ),
+        iconButtonTheme: IconButtonThemeData(
+          style: IconButton.styleFrom(
+            foregroundColor: darkMode
+                ? const Color(0xFFE5E5EA)
+                : const Color(0xFF3A3A3C),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ),
+        popupMenuTheme: PopupMenuThemeData(
+          color: darkMode ? const Color(0xFF1C1C1E) : Colors.white,
+          elevation: 14,
+          shadowColor: Colors.black26,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          textStyle: TextStyle(
+            color: darkMode ? const Color(0xFFF2F2F7) : const Color(0xFF1C1C1E),
+            fontSize: 14,
+          ),
+        ),
+        dropdownMenuTheme: DropdownMenuThemeData(
+          menuStyle: MenuStyle(
+            backgroundColor: WidgetStatePropertyAll(
+              darkMode ? const Color(0xFF1C1C1E) : Colors.white,
+            ),
+            elevation: const WidgetStatePropertyAll(12),
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            ),
+            padding: const WidgetStatePropertyAll(
+              EdgeInsets.symmetric(vertical: 6),
+            ),
+          ),
+          inputDecorationTheme: const InputDecorationTheme(
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(12)),
+              borderSide: BorderSide.none,
+            ),
+          ),
         ),
         dialogTheme: DialogThemeData(
-          backgroundColor: darkMode ? Color(0xFF17191D) : Color(0xFFFFF8F1),
+          backgroundColor: darkMode ? const Color(0xFF1C1C1E) : Colors.white,
           surfaceTintColor: Colors.transparent,
-          shadowColor: Colors.black87,
+          shadowColor: Colors.black26,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
           titleTextStyle: TextStyle(
-            color: darkMode ? Color(0xFFF1F3F5) : Color(0xFF20242A),
-            fontSize: 22,
+            color: darkMode ? const Color(0xFFF2F2F7) : const Color(0xFF1C1C1E),
+            fontSize: 20,
             fontWeight: FontWeight.w700,
+          ),
+        ),
+        chipTheme: ChipThemeData(
+          backgroundColor: darkMode
+              ? const Color(0xFF2C2C2E)
+              : const Color(0xFFF2F2F7),
+          side: BorderSide(
+            color: darkMode ? const Color(0xFF3A3A3C) : const Color(0xFFE5E5EA),
+            width: 0.6,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          labelStyle: const TextStyle(fontSize: 12),
+        ),
+        cardTheme: CardThemeData(
+          color: darkMode ? const Color(0xFF1C1C1E) : Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          margin: EdgeInsets.zero,
+        ),
+        dividerTheme: DividerThemeData(
+          color: darkMode ? const Color(0xFF38383A) : const Color(0xFFE5E5EA),
+          thickness: 0.6,
+        ),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: darkMode
+              ? const Color(0xFF2C2C2E)
+              : const Color(0xFF1C1C1E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        listTileTheme: ListTileThemeData(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 4,
           ),
         ),
       ),
@@ -185,6 +336,28 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   );
   final List<Client> clients = [];
   final List<StockItem> stockItems = [];
+  final List<Product> products = [];
+  final List<Delivery> deliveries = [];
+  final List<Order> orders = [];
+  int ordersAvitoSyncedAt = 0;
+  // SKU товаров, которые реально попадают в фид автозагрузки Авито.
+  // Значок «на Авито» в разделе «Товары» строится по этому списку.
+  final Set<String> feedSkus = {};
+  bool feedSkusLoaded = false;
+  // Справочник категорий Авито (дерево + поля) для формы товара.
+  AvitoCatalogData? avitoCatalogData;
+  bool avitoCatalogLoaded = false;
+  int avitoCatalogErrors = 0;
+  bool _treeLoadRequested = false;
+  bool preloadingTree = false;
+  int preloadDone = 0;
+  int preloadTotal = 0;
+  String selectedDeliveryId = '';
+  bool sidebarVisible = true;
+  final Set<String> deletedProductIds = {};
+  final Set<String> deletedDeliveryIds = {};
+  final Set<String> deletedOrderIds = {};
+  Product? productDraft;
   final List<StockMovement> stockMovements = [];
   final List<AuditEntry> auditEntries = [];
   final SyncQueue localChangeQueue = SyncQueue();
@@ -276,6 +449,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   final List<Map<String, dynamic>> closedAccountingPeriods = [];
   List<List<String>> dealRows = [];
   List<List<String>> syncedDealRows = [];
+  List<List<String>> expenseSheetRows = [];
   List<String> dealImportErrors = [];
   List<List<String>> manualDealRows = [];
   List<Deal> typedDeals = [];
@@ -484,10 +658,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   Uri? get _serverEndpoint {
     final saved = prefs.getString('crm_server_url') ?? '';
-    // CRM_SERVER_URL в релизе является единым источником для iPhone, macOS
-    // и Windows. Локальное поле нужно лишь старым сборкам без dart-define.
+    // Владелец может переключить endpoint из интерфейса при миграции. Если
+    // сохранённый адрес есть, он имеет приоритет над адресом сборки; это
+    // позволяет перейти с Apps Script на VPS без новой установки приложения.
     final configured = AppConfig.serverUrl.trim();
-    return Uri.tryParse(configured.isNotEmpty ? configured : saved);
+    return Uri.tryParse(saved.isNotEmpty ? saved : configured);
   }
 
   Future<void> _initializeAuth() async {
@@ -555,7 +730,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       });
       unawaited(_saveUserProfiles());
     } on CrmAuthException catch (error) {
-      if (error.code != 'SESSION_INVALID' && error.code != 'ACCOUNT_REVOKED') {
+      if (error.code != 'SESSION_INVALID' &&
+          error.code != 'ACCOUNT_REVOKED' &&
+          error.code != 'AUTH_REQUIRED') {
         return;
       }
       await secretStore.delete('crm_session_token');
@@ -752,7 +929,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       if (messengerConnected['vk'] == true) {
         unawaited(_loadVkConversations(silent: true));
       }
+      localChangeQueue.items.removeWhere((item) => item.entity == 'Сессия');
       _audit('Вход в CRM', 'Сессия', session.user.name);
+      unawaited(_refreshWorkspaceFromCloud());
+      unawaited(_refreshFeedSkus());
+      unawaited(_refreshAvitoCatalog());
     } catch (error) {
       if (mounted) setState(() => _authError = _safeAuthError(error));
     }
@@ -929,6 +1110,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       final serverConfig = response['configuration'] is Map
           ? Map<String, dynamic>.from(response['configuration'])
           : const <String, dynamic>{};
+      if (clearLocalSecrets && serverConfig['serverManagedSecrets'] != true) {
+        throw StateError(
+          'Сервер не подтвердил перенос ключей. Локальные ключи сохранены.',
+        );
+      }
       if (serverConfig['sheetUrl']?.toString().isNotEmpty == true) {
         sheetController.text = serverConfig['sheetUrl'].toString();
       }
@@ -1072,6 +1258,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshWorkspaceFromCloud());
+      // Бейджи «на Авито» обновляем независимо от состояния очереди.
+      unawaited(_refreshFeedSkus());
+      unawaited(_refreshAvitoCatalog());
       if (_usesGoogleCalendar) unawaited(_loadCalendarEvents());
     }
   }
@@ -1080,6 +1269,17 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     final savedTheme = prefs.getBool('dark_mode') ?? false;
+    sidebarVisible = prefs.getBool('crm_sidebar_visible') ?? true;
+    deletedProductIds.addAll(
+      prefs.getStringList('crm_deleted_products') ?? const [],
+    );
+    deletedDeliveryIds.addAll(
+      prefs.getStringList('crm_deleted_deliveries') ?? const [],
+    );
+    deletedOrderIds.addAll(
+      prefs.getStringList('crm_deleted_orders') ?? const [],
+    );
+    ordersAvitoSyncedAt = prefs.getInt('crm_orders_synced_at') ?? 0;
     if (savedTheme != widget.darkMode) widget.onThemeChanged(savedTheme);
     // При входе через общий CRM-сервер ключи интеграций остаются только на
     // сервере. Не трогаем локальную связку ключей при каждом запуске — это
@@ -1270,6 +1470,49 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           ),
         );
       }
+      final savedProducts = prefs.getString('crm_products');
+      if (savedProducts != null) {
+        products.addAll(
+          (jsonDecode(savedProducts) as List).whereType<Map>().map(
+            (e) => Product.fromJson(Map<String, dynamic>.from(e)),
+          ),
+        );
+      }
+      final savedDraft = prefs.getString('crm_product_draft');
+      if (savedDraft != null) {
+        try {
+          productDraft = Product.fromJson(
+            Map<String, dynamic>.from(jsonDecode(savedDraft) as Map),
+          );
+        } catch (_) {}
+      }
+      products.removeWhere(
+        (item) =>
+            item.name.trim().isEmpty &&
+            item.sku.trim().isEmpty &&
+            item.marketplaceUrl.trim().isEmpty &&
+            item.quantity == 0 &&
+            item.photos.isEmpty,
+      );
+      _normalizeProductSkus();
+      _fillAvitoItemIds();
+      final savedDeliveries = prefs.getString('crm_deliveries');
+      if (savedDeliveries != null) {
+        deliveries.addAll(
+          (jsonDecode(savedDeliveries) as List).whereType<Map>().map(
+            (e) => Delivery.fromJson(Map<String, dynamic>.from(e)),
+          ),
+        );
+      }
+      _mergeDuplicateDeliveries(persist: false);
+      final savedOrders = prefs.getString('crm_orders');
+      if (savedOrders != null) {
+        orders.addAll(
+          (jsonDecode(savedOrders) as List).whereType<Map>().map(
+            (e) => Order.fromJson(Map<String, dynamic>.from(e)),
+          ),
+        );
+      }
       final savedAudit = prefs.getString('crm_audit');
       if (savedAudit != null) {
         auditEntries.addAll(
@@ -1425,6 +1668,17 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       syncedDealRows = [];
     }
     try {
+      final cachedExpenses = prefs.getString('cached_expenses');
+      if (cachedExpenses != null) {
+        expenseSheetRows = (jsonDecode(cachedExpenses) as List)
+            .whereType<List>()
+            .map((row) => row.map((cell) => cell.toString()).toList())
+            .toList();
+      }
+    } catch (_) {
+      expenseSheetRows = [];
+    }
+    try {
       final savedManual = prefs.getString('manual_deal_rows');
       if (savedManual != null) {
         manualDealRows = (jsonDecode(savedManual) as List)
@@ -1445,6 +1699,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     // sheets are the source of truth for a fresh computer. We never overwrite
     // a device that still has unsent local changes.
     await _restoreCloudWorkspaceIfAvailable();
+    // Бейджи «на Авито»: загружаем список SKU фида даже на старте, когда
+    // очередь ещё не синхронизировалась и _refreshWorkspaceFromCloud может
+    // выйти раньше времени.
+    unawaited(_refreshFeedSkus());
     if (!mounted) return;
     setState(() {
       wrapDealText = prefs.getBool("wrap") ?? true;
@@ -1819,6 +2077,12 @@ $instructions
       clients: clients,
       stockItems: stockItems,
       stockMovements: stockMovements,
+      products: products.map((item) => item.toJson()),
+      deliveries: deliveries.map((item) => item.toJson()),
+      orders: orders.map((item) => item.toJson()),
+      deletedProductIds: deletedProductIds,
+      deletedDeliveryIds: deletedDeliveryIds,
+      deletedOrderIds: deletedOrderIds,
       manualDeals: manualDealRows,
       businessTransactions: businessTransactions,
       closedPeriods: closedAccountingPeriods,
@@ -3410,6 +3674,28 @@ $instructions
       jsonEncode(stockMovements.map((e) => e.toJson()).toList()),
     );
     await prefs.setString(
+      'crm_products',
+      jsonEncode(products.map((e) => e.toJson()).toList()),
+    );
+    await prefs.setString(
+      'crm_deliveries',
+      jsonEncode(deliveries.map((e) => e.toJson()).toList()),
+    );
+    await prefs.setString(
+      'crm_orders',
+      jsonEncode(orders.map((e) => e.toJson()).toList()),
+    );
+    await prefs.setInt('crm_orders_synced_at', ordersAvitoSyncedAt);
+    await prefs.setStringList(
+      'crm_deleted_products',
+      deletedProductIds.toList(),
+    );
+    await prefs.setStringList(
+      'crm_deleted_deliveries',
+      deletedDeliveryIds.toList(),
+    );
+    await prefs.setStringList('crm_deleted_orders', deletedOrderIds.toList());
+    await prefs.setString(
       'crm_audit',
       jsonEncode(auditEntries.map((e) => e.toJson()).toList()),
     );
@@ -3538,6 +3824,13 @@ $instructions
     }
   }
 
+  Future<void> _retryConflictChanges() async {
+    if (localChangeQueue.reviewCount == 0) return;
+    localChangeQueue.clearNeedsReview();
+    await _saveCrmData();
+    await _syncPendingChanges();
+  }
+
   Future<void> _syncPendingChanges({
     bool silent = false,
     bool respectBackoff = false,
@@ -3564,6 +3857,7 @@ $instructions
       }
     }
     final candidates = localChangeQueue.items
+        .where((item) => !item.needsReview)
         .where(SyncQueue.isTransportReady)
         .where(
           (item) =>
@@ -3616,7 +3910,7 @@ $instructions
             'Конфликт синхронизации${scopes.isEmpty ? '' : ' ($scopes)'}. '
             'Данные другого устройства сохранены на сервере; локальная правка '
             'осталась в очереди для проверки.';
-        localChangeQueue.markAttempt(result.conflictIds, error: message);
+        localChangeQueue.markNeedsReview(result.conflictIds, error: message);
         await _saveCrmData();
         if (mounted) {
           setState(() => pendingChangesSyncError = message);
@@ -3698,11 +3992,13 @@ $instructions
         auditEntries.length - AppConstants.maxAuditEntries,
       );
     }
-    localChangeQueue.enqueue(
-      entity: entity,
-      details: '$action: $details',
-      payload: _syncPayload(entity),
-    );
+    if (entity != 'Сессия') {
+      localChangeQueue.enqueue(
+        entity: entity,
+        details: '$action: $details',
+        payload: _syncPayload(entity),
+      );
+    }
     _saveCrmData();
     unawaited(_syncPendingChanges(silent: true));
   }
@@ -4035,10 +4331,20 @@ $instructions
         localChangeQueue.items.isNotEmpty) {
       return;
     }
+    final queueGeneration = localChangeQueue.localGeneration;
+    final requestedEndpoint = syncEndpoint;
+    final requestedToken = syncToken;
     try {
       final snapshot = await _sheets.readWorkspace(
         cancellation: _lifecycleCancellation,
       );
+      // Пока запрос выполнялся, пользователь мог изменить данные, а очередь —
+      // даже успеть синхронизироваться. Устаревший ответ нельзя применять.
+      if (!localChangeQueue.isUnchangedAndEmptySince(queueGeneration) ||
+          syncEndpoint != requestedEndpoint ||
+          syncToken != requestedToken) {
+        return;
+      }
       if (snapshot == null || snapshot.workspace.isEmpty) return;
       final cloud = snapshot.workspace;
       _cloudRevisions
@@ -4067,6 +4373,27 @@ $instructions
           ..clear()
           ..addAll(cloudMovements.map(StockMovement.fromJson));
       }
+      final cloudProducts = objects('products');
+      if (cloud.containsKey('products')) {
+        products
+          ..clear()
+          ..addAll(cloudProducts.map(Product.fromJson));
+      }
+      _normalizeProductSkus();
+      _fillAvitoItemIds();
+      final cloudDeliveries = objects('deliveries');
+      if (cloud.containsKey('deliveries')) {
+        deliveries
+          ..clear()
+          ..addAll(cloudDeliveries.map(Delivery.fromJson));
+      }
+      _mergeDuplicateDeliveries(persist: false);
+      final cloudOrders = objects('orders');
+      if (cloud.containsKey('orders')) {
+        orders
+          ..clear()
+          ..addAll(cloudOrders.map(Order.fromJson));
+      }
       final cloudDeals = cloud['manualDeals'];
       if (cloudDeals is List) {
         manualDealRows = cloudDeals
@@ -4084,7 +4411,9 @@ $instructions
         closedAccountingPeriods
           ..clear()
           ..addAll(cloudClosed);
-        closedAccountingPeriod = closedAccountingPeriods.last;
+        closedAccountingPeriod = closedAccountingPeriods.isEmpty
+            ? null
+            : closedAccountingPeriods.last;
       }
       final cloudAppointments = objects('appointments');
       if (cloud.containsKey('appointments') && !_usesGoogleCalendar) {
@@ -4296,6 +4625,388 @@ $instructions
     } finally {
       _workspaceRefreshInProgress = false;
     }
+    // Значок «на Авито» обновляем отдельно после синхронизации товаров:
+    // список SKU фида приходит с сервера, данные для него не в workspace.
+    unawaited(_refreshFeedSkus());
+    unawaited(_refreshAvitoCatalog());
+  }
+
+  /// Обновляет список SKU товаров, которые есть в фиде автозагрузки Авито.
+  /// Значок «на Авито» в разделе «Товары» строится по этому списку; если
+  /// сервер недоступен, список остаётся прежним (последним известным).
+  Future<void> _refreshFeedSkus() async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return;
+    try {
+      final result = await service.avitoFeedSkus(session.token);
+      final skus = result['skus'];
+      if (skus is! List) return;
+      feedSkus
+        ..clear()
+        ..addAll(skus.map((value) => value.toString()));
+      feedSkusLoaded = true;
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Офлайн или сервер недоступен: оставляем последний известный список.
+    }
+  }
+
+  /// Диагностический лог приложения (временный, для разбора зависаний).
+  Future<void> _dbg(String message) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/crm_debug.log');
+      final line = '${DateTime.now().toIso8601String()} $message\n';
+      await file.writeAsString(line, mode: FileMode.append, flush: true);
+    } catch (_) {}
+  }
+
+  /// Загружает справочник категорий Авито с сервера и кэширует локально.
+  /// Вызывается при входе и после ручного обновления в настройках.
+  Future<void> _refreshAvitoCatalog({bool force = false}) async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return;
+    if (avitoCatalogLoaded && !force) return;
+    final started = DateTime.now();
+    await _dbg('catalog: start (force=$force)');
+    try {
+      final result = await service.avitoCatalog(session.token);
+      await _dbg(
+        'catalog: response ${DateTime.now().difference(started).inMilliseconds} ms',
+      );
+      if (result['ok'] != true) return;
+      final parsed = AvitoCatalogData.fromJson(result);
+      if (parsed.categories.isEmpty && !force) return;
+      avitoCatalogData = parsed;
+      avitoCatalogLoaded = true;
+      avitoCatalogErrors = (result['errorCount'] as num?)?.toInt() ?? 0;
+      // Категории есть, а дерева нет — подтягиваем его одним запросом.
+      if (parsed.tree.isEmpty && !_treeLoadRequested) {
+        _treeLoadRequested = true;
+        unawaited(_loadAvitoCatalogTree());
+      }
+      await prefs.setInt(
+        'crm_avito_catalog_at',
+        DateTime.now().millisecondsSinceEpoch,
+      );
+      await prefs.setString(
+        'crm_avito_catalog',
+        jsonEncode({
+          'categories': result['categories'],
+          'tree': result['tree'],
+        }),
+      );
+      if (mounted) setState(() {});
+    } catch (error) {
+      await _dbg(
+        'catalog: ERROR ${error.runtimeType} '
+        '${DateTime.now().difference(started).inMilliseconds} ms',
+      );
+      // Офлайн: пробуем кэш из prefs.
+      await _restoreAvitoCatalogFromCache();
+    }
+  }
+
+  Future<void> _restoreAvitoCatalogFromCache() async {
+    if (avitoCatalogLoaded) return;
+    final raw = prefs.getString('crm_avito_catalog') ?? '';
+    if (raw.isEmpty) return;
+    try {
+      final parsed = AvitoCatalogData.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
+      avitoCatalogData = parsed;
+      // Без дерева пошаговый выбор категорий невозможен — грузим заново.
+      avitoCatalogLoaded = parsed.tree.isNotEmpty;
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  /// Ключи Авито: сначала отдельные поля, иначе — из списка аккаунтов
+  /// (в старых версиях ключи хранились только там).
+  Future<({String id, String secret})> _avitoCredentials() async {
+    final id = await secretStore.read('avito_client_id') ?? '';
+    final secret = await secretStore.read('avito_client_secret') ?? '';
+    if (id.isNotEmpty && secret.isNotEmpty) return (id: id, secret: secret);
+    final raw = await secretStore.read('avito_accounts') ?? '';
+    if (raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          for (final item in decoded.whereType<Map>()) {
+            final cid = '${item['clientId'] ?? ''}'.trim();
+            final csec = '${item['clientSecret'] ?? ''}'.trim();
+            if (cid.isNotEmpty && csec.isNotEmpty) {
+              return (id: cid, secret: csec);
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    return (id: '', secret: '');
+  }
+
+  // --- Локальный кэш справочника Авито на Mac ---------------------------
+  // Канал до VPS нестабилен, поэтому всё, что уже загружали, сохраняем на
+  // диск: повторные открытия категорий и полей идут без сети.
+  Future<Directory> _avitoCacheDir() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory('${docs.path}/crm_avito_cache');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  Future<dynamic> _readAvitoCache(String name) async {
+    try {
+      final dir = await _avitoCacheDir();
+      final file = File('${dir.path}/$name.json');
+      if (!await file.exists()) return null;
+      return jsonDecode(await file.readAsString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeAvitoCache(String name, Object value) async {
+    try {
+      final dir = await _avitoCacheDir();
+      await File(
+        '${dir.path}/$name.json',
+      ).writeAsString(jsonEncode(value), flush: true);
+    } catch (_) {}
+  }
+
+  /// Скачивает дерево категорий в локальный кэш: сначала корень, затем
+  /// по уровням. Каждый ответ маленький, поэтому работает даже на слабом
+  /// канале. Поля категорий кэшируются отдельно, по мере использования.
+  Future<void> _preloadAvitoTree() async {
+    if (preloadingTree) return;
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return;
+    setState(() {
+      preloadingTree = true;
+      preloadDone = 0;
+      preloadTotal = 1;
+    });
+    final visited = <String>{};
+    final queue = <String>[''];
+    try {
+      while (queue.isNotEmpty) {
+        final parent = queue.removeAt(0);
+        if (visited.contains(parent)) continue;
+        visited.add(parent);
+        final cacheName = 'children_${parent.isEmpty ? 'root' : parent}';
+        List<dynamic> items = const [];
+        final cached = await _readAvitoCache(cacheName);
+        if (cached is List) {
+          items = cached;
+        } else {
+          final result = await service.avitoCatalogChildren(
+            session.token,
+            parent: parent,
+          );
+          final raw = result['items'];
+          if (raw is! List) continue;
+          items = raw;
+          await _writeAvitoCache(cacheName, raw);
+        }
+        for (final item in items) {
+          if (item is Map && item['hasChildren'] == true) {
+            final slug = '${item['slug'] ?? ''}';
+            if (slug.isNotEmpty) queue.add(slug);
+          }
+        }
+        if (mounted) {
+          setState(() {
+            preloadDone = visited.length;
+            preloadTotal = visited.length + queue.length;
+          });
+        }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Дерево категорий сохранено в кэш: '
+              '${visited.length} узлов. Категории открываются без сети.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Закачка прервалась: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => preloadingTree = false);
+    }
+  }
+
+  /// Загружает поля одной категории с сервера (точечно, быстро).
+  Future<AvitoCatalogData?> _loadAvitoCategoryFields(String slug) async {
+    final service = _authService;
+    final session = _session;
+    final current = avitoCatalogData;
+    if (service == null || session == null || current == null) return current;
+    if ((current.fields[slug] ?? const []).isNotEmpty) return current;
+    final cached = await _readAvitoCache('fields_$slug');
+    if (cached is List) {
+      final parsedCached = cached
+          .whereType<Map>()
+          .map((e) => AvitoField.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      final cachedResult = current.withFields(slug, parsedCached);
+      avitoCatalogData = cachedResult;
+      if (mounted) setState(() {});
+      return cachedResult;
+    }
+    final fieldStarted = DateTime.now();
+    await _dbg('fields: start $slug');
+    try {
+      final result = await service.avitoCatalog(session.token, slug: slug);
+      await _dbg(
+        'fields: ok $slug '
+        '${DateTime.now().difference(fieldStarted).inMilliseconds} ms',
+      );
+      if (result['ok'] != true) return current;
+      final node = result['fields'];
+      final rawFields = node is Map ? node['fields'] : null;
+      final parsed = (rawFields is List ? rawFields : const [])
+          .whereType<Map>()
+          .map((e) => AvitoField.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+      final updated = current.withFields(slug, parsed);
+      avitoCatalogData = updated;
+      await _writeAvitoCache(
+        'fields_$slug',
+        parsed.map((f) => f.toJson()).toList(),
+      );
+      if (mounted) setState(() {});
+      return updated;
+    } catch (_) {
+      return current;
+    }
+  }
+
+  /// Быстро загружает дерево категорий (если поля уже есть, полный синк
+  /// не нужен — достаточно одного запроса к API).
+  Future<bool> _loadAvitoCatalogTree() async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return false;
+    final credentials = await _avitoCredentials();
+    if (credentials.id.isEmpty || credentials.secret.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Сначала введите Client ID и Client Secret Авито'),
+          ),
+        );
+      }
+      return false;
+    }
+    final treeStarted = DateTime.now();
+    await _dbg('tree: start');
+    try {
+      final result = await service.avitoCatalogTree(
+        session.token,
+        clientId: credentials.id,
+        clientSecret: credentials.secret,
+      );
+      await _dbg(
+        'tree: ok ${DateTime.now().difference(treeStarted).inMilliseconds} ms',
+      );
+      if (result['ok'] != true) {
+        throw StateError('${result['error'] ?? 'не удалось загрузить дерево'}');
+      }
+      await _refreshAvitoCatalog(force: true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Дерево категорий загружено: ${result['categories']} категорий',
+            ),
+          ),
+        );
+      }
+      return true;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Не удалось загрузить дерево: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+      return false;
+    }
+  }
+
+  /// Полностью обновляет справочник каталога Авито через VPS (владелец).
+  Future<bool> _syncAvitoCatalogFromVps({bool onlyFailed = false}) async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return false;
+    final credentials = await _avitoCredentials();
+    if (credentials.id.isEmpty || credentials.secret.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Сначала введите Client ID и Client Secret Авито'),
+          ),
+        );
+      }
+      return false;
+    }
+    try {
+      final result = await service.avitoCatalogSync(
+        session.token,
+        clientId: credentials.id,
+        clientSecret: credentials.secret,
+        onlyFailed: onlyFailed,
+      );
+      if (result['ok'] != true) {
+        throw StateError(
+          '${result['error'] ?? 'Сервер не смог обновить каталог'}',
+        );
+      }
+      await _refreshAvitoCatalog(force: true);
+      if (mounted) {
+        final errors = (result['errorCount'] as num?)?.toInt() ?? 0;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Каталог Авито: ${result['categories']} категорий, '
+              'полей загружено ${result['fields']}'
+              '${errors > 0 ? ', не удалось: $errors (можно повторить)' : ''}',
+            ),
+          ),
+        );
+      }
+      return true;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Не удалось обновить каталог: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+      return false;
+    }
   }
 
   Future<int> _restoreManualDealsFromExport() async {
@@ -4491,6 +5202,11 @@ $instructions
     if (!_canView(_pagePermissionArea(selected))) selected = allowed;
     return DashboardShell(
       darkMode: widget.darkMode,
+      sidebarVisible: sidebarVisible,
+      onToggleSidebar: () {
+        setState(() => sidebarVisible = !sidebarVisible);
+        unawaited(prefs.setBool('crm_sidebar_visible', sidebarVisible));
+      },
       sidebar: _sidebar(),
       title: pages[selected].title,
       now: now,
@@ -4525,9 +5241,10 @@ $instructions
     3 => 'calendar',
     4 => 'finance',
     5 => 'stock',
-    6 => 'settings',
-    7 => 'messages',
-    8 => 'bot',
+    6 => 'stock',
+    7 => 'settings',
+    8 => 'messages',
+    9 => 'bot',
     _ => 'dashboard',
   };
 
@@ -4546,7 +5263,7 @@ $instructions
       (0, 'Сегодня', Icons.today_outlined),
       (1, 'Клиенты', Icons.people_outline),
       (3, 'Записи', Icons.calendar_month_outlined),
-      (7, 'Сообщения', Icons.forum_outlined),
+      (8, 'Сообщения', Icons.forum_outlined),
     ];
     final destinations = primary
         .where((item) => _canView(_pagePermissionArea(item.$1)))
@@ -4576,7 +5293,7 @@ $instructions
     if (index == 4) _loadAccounting();
     if (index == 2 || index == 0) _loadDeals();
     if (index == 3 && _usesGoogleCalendar) _loadCalendarEvents();
-    if (index == 7) unawaited(_refreshMessageSources());
+    if (index == 8) unawaited(_refreshMessageSources());
     if (usesCompactNavigation(MediaQuery.sizeOf(context).width)) {
       unawaited(Navigator.of(context).maybePop());
     }
@@ -4600,10 +5317,11 @@ $instructions
     if (selected == 3) return _appointments();
     if (selected == 2) return _deals();
     if (selected == 4) return _accounting();
-    if (selected == 5) return _stock();
-    if (selected == 6) return _settings();
-    if (selected == 7) return _messages();
-    if (selected == 8) return _botTest();
+    if (selected == 5) return _products();
+    if (selected == 6) return _stock();
+    if (selected == 7) return _settings();
+    if (selected == 8) return _messages();
+    if (selected == 9) return _botTest();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -10924,6 +11642,8 @@ $instructions
     onRefreshEverything: _refreshEverything,
     onSyncPendingChanges: _syncPendingChanges,
     onExportPendingChanges: _exportPendingChanges,
+    onRetryConflicts: _retryConflictChanges,
+    conflictsCount: localChangeQueue.reviewCount,
     auditEntries: auditEntries,
   );
 
@@ -10938,7 +11658,7 @@ $instructions
       builder: (dialogContext) => AlertDialog(
         title: const Text('Выгрузить все данные CRM?'),
         content: const Text(
-          'Текущие клиенты, сделки, склад, финансы, записи, услуги, заметки, база знаний и общие настройки сообщений будут сохранены на общем CRM-сервере. Выполняйте это с компьютера владельца с актуальными данными.',
+          'Текущие клиенты, сделки, склад, финансы, записи, услуги, заметки, база знаний и общие настройки сообщений будут сохранены на общем CRM-сервере. Строки таблиц «Август», «Основное» и «Расходы» также сохраняются на сервере, после чего CRM читает их с VPS. Выполняйте это с компьютера владельца с актуальными данными.',
         ),
         actions: [
           TextButton(
@@ -10953,9 +11673,11 @@ $instructions
       ),
     );
     if (confirmed != true) return;
-    const snapshots = [
+    final snapshots = <(String, String)>[
       ('Клиент', 'Полная выгрузка клиентов'),
       ('Товар', 'Полная выгрузка склада'),
+      ('Поставка', 'Полная выгрузка поставок'),
+      ('Товар на продажу', 'Полная выгрузка товаров'),
       ('Сделка', 'Полная выгрузка сделок'),
       ('Бухгалтерия', 'Полная выгрузка бухгалтерии'),
       ('Запись', 'Полная выгрузка записей'),
@@ -10965,6 +11687,10 @@ $instructions
       ('Сообщения', 'Полная выгрузка общих сообщений'),
       ('Журнал CRM', 'Полная выгрузка журнала'),
     ];
+    // Заказы хранит только VPS: Apps Script не принимает scope orders.
+    if (_session != null) {
+      snapshots.add(('Заказ', 'Полная выгрузка заказов'));
+    }
     for (final snapshot in snapshots) {
       localChangeQueue.enqueue(
         entity: snapshot.$1,
@@ -10972,8 +11698,221 @@ $instructions
         payload: _syncPayload(snapshot.$1),
       );
     }
+    final sheetsToUpload = _sheetSnapshotForUpload();
+    final service = _authService;
+    final session = _session;
+    if (sheetsToUpload.isNotEmpty && service != null && session != null) {
+      try {
+        await service.importSheets(session.token, sheetsToUpload);
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Таблицы не сохранены на VPS: ${CrmLogger.redact(error.toString())}',
+              ),
+            ),
+          );
+        }
+      }
+    }
     await _saveCrmData();
     await _syncPendingChanges();
+    await _showMigrationCheck();
+  }
+
+  /// Строки рабочих листов, которые нужны страницам «Сделки» и «Бухгалтерия».
+  /// После перехода на VPS они читаются с сервера, а не из Google Sheets.
+  Map<String, dynamic> _sheetSnapshotForUpload() {
+    final sheets = <String, dynamic>{};
+    void add(String area, String name, List<List<String>> rows) {
+      if (rows.isEmpty) return;
+      sheets[name] = {'area': area, 'rows': rows};
+    }
+
+    add('deals', _dataSource('deals', SheetsSchema.dealsSheet), syncedDealRows);
+    add(
+      'finance',
+      _dataSource('accounting', SheetsSchema.accountingSheet),
+      accountingRows,
+    );
+    add(
+      'finance',
+      _dataSource('expenses', SheetsSchema.expensesSheet),
+      expenseSheetRows,
+    );
+    return sheets;
+  }
+
+  /// Сверка локальных данных с VPS после полной выгрузки. Сравниваются
+  /// количества записей и строк таблиц, чтобы заметить неполный перенос.
+  Future<void> _showMigrationCheck() async {
+    WorkspaceSnapshot? snapshot;
+    try {
+      snapshot = await _sheets.readWorkspace(
+        cancellation: _lifecycleCancellation,
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Не удалось сверить перенос: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (snapshot == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сервер не вернул данные для сверки')),
+      );
+      return;
+    }
+    final workspace = snapshot.workspace;
+    int count(String key) =>
+        workspace[key] is List ? (workspace[key] as List).length : 0;
+    final cloudKnowledge = workspace['knowledge'];
+    final serverKnowledge =
+        cloudKnowledge is List &&
+            cloudKnowledge.any(
+              (item) =>
+                  item is Map &&
+                  (item['content']?.toString().trim().isNotEmpty ?? false),
+            )
+        ? 1
+        : 0;
+    final server = <String, int>{
+      'clients': count('clients'),
+      'stockItems': count('stockItems'),
+      'products': count('products'),
+      'deliveries': count('deliveries'),
+      if (workspace.containsKey('orders')) 'orders': count('orders'),
+      'manualDeals': count('manualDeals'),
+      'transactions': count('transactions'),
+      'closedPeriods': count('closedPeriods'),
+      'appointments': count('appointments'),
+      'serviceCatalog': count('serviceCatalog'),
+      'notes': count('notes'),
+      'revenuePlans': count('revenuePlans'),
+      'knowledge': serverKnowledge,
+    };
+    final local = <String, int>{
+      'clients': clients.length,
+      'stockItems': stockItems.length,
+      'products': products.length,
+      'deliveries': deliveries.length,
+      if (workspace.containsKey('orders')) 'orders': orders.length,
+      'manualDeals': manualDealRows.length,
+      'transactions': businessTransactions.length,
+      'closedPeriods': closedAccountingPeriods.length,
+      'appointments': calendarEvents.length,
+      'serviceCatalog': serviceCatalog.length,
+      'notes': dashboardNotes.length,
+      'revenuePlans': revenuePlans.length,
+      'knowledge': knowledgeBase.trim().isEmpty ? 0 : 1,
+    };
+    Future<void> addSheet(
+      String key,
+      String area,
+      String name,
+      int localCount,
+    ) async {
+      if (localCount == 0) return;
+      local[key] = localCount;
+      try {
+        server[key] = (await _sheets.readSheet(name, area: area)).length;
+      } catch (_) {
+        server[key] = -1;
+      }
+    }
+
+    await addSheet(
+      'dealsSheet',
+      'deals',
+      _dataSource('deals', SheetsSchema.dealsSheet),
+      syncedDealRows.length,
+    );
+    await addSheet(
+      'accountingSheet',
+      'finance',
+      _dataSource('accounting', SheetsSchema.accountingSheet),
+      accountingRows.length,
+    );
+    await addSheet(
+      'expensesSheet',
+      'finance',
+      _dataSource('expenses', SheetsSchema.expensesSheet),
+      expenseSheetRows.length,
+    );
+    if (!mounted) return;
+    final report = buildMigrationReport(local: local, server: server);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          report.isComplete ? 'Перенос проверен' : 'Есть расхождения',
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Row(
+                children: [
+                  Expanded(child: Text('Раздел')),
+                  SizedBox(
+                    width: 90,
+                    child: Text('Локально', textAlign: TextAlign.end),
+                  ),
+                  SizedBox(
+                    width: 70,
+                    child: Text('VPS', textAlign: TextAlign.end),
+                  ),
+                ],
+              ),
+              const Divider(),
+              for (final section in report.sections)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(section.title)),
+                      SizedBox(
+                        width: 90,
+                        child: Text(
+                          '${section.local}',
+                          textAlign: TextAlign.end,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 70,
+                        child: Text(
+                          section.server < 0 ? '—' : '${section.server}',
+                          textAlign: TextAlign.end,
+                          style: TextStyle(
+                            color: section.matches
+                                ? Theme.of(dialogContext).colorScheme.primary
+                                : Theme.of(dialogContext).colorScheme.error,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _setupAi() async {
@@ -11878,6 +12817,3148 @@ $instructions
     );
   }
 
+  Widget _products() => ProductsPage(
+    items: products,
+    deliveries: deliveries,
+    selectedDeliveryId: selectedDeliveryId,
+    draft: productDraft,
+    canEdit: _canEdit('stock'),
+    onSelectDelivery: (id) => setState(() => selectedDeliveryId = id),
+    onNewDelivery: () => unawaited(_editDelivery()),
+    onEditDelivery: (delivery) => unawaited(_editDelivery(delivery)),
+    onDeleteDelivery: _deleteDelivery,
+    onStatusChanged: (item, status) =>
+        unawaited(_changeProductStatus(item, status)),
+    onExportExcel: _exportProductsExcel,
+    onImportExcel: _importProductsExcel,
+    onImportAvito: _importAvitoExcel,
+    onBulkUpdate: _bulkUpdateProducts,
+    onSalePriceChanged: _updateProductSalePrice,
+    onSale: _applySale,
+    onAvitoSync: _syncWithAvito,
+    onAvitoSettings: _showAvitoSettings,
+    onAvitoCatalog: _showAvitoCatalogDialog,
+    onAvitoStats: _refreshAvitoStats,
+    onAvitoPrices: _refreshAvitoRealPrices,
+    onOrders: _showOrders,
+    activeOrdersCount: _activeOrdersCount,
+    onStartProduct: _startProduct,
+    onSaveProduct: (item) => unawaited(_saveProduct(item)),
+    onDeleteProduct: _deleteProduct,
+    onCloseDraft: _closeProductDraft,
+    onEditProduct: (item) => unawaited(_openProductEditor(item, isNew: false)),
+    mediaBaseUrl: syncEndpoint,
+    onUploadPhotos: _uploadProductPhotos,
+    feedSkus: feedSkus,
+    feedSkusLoaded: feedSkusLoaded,
+    catalog: avitoCatalogData,
+    catalogLoaded: avitoCatalogLoaded,
+  );
+
+  Future<List<String>> _uploadProductPhotos(List<XFile> files) async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return const [];
+    final urls = <String>[];
+    for (final file in files) {
+      final bytes = await file.readAsBytes();
+      if (bytes.length > 8 * 1024 * 1024) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Фото больше 8 МБ пропущено')),
+          );
+        }
+        continue;
+      }
+      try {
+        urls.add(await service.uploadPhoto(session.token, bytes));
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось загрузить фото: $error')),
+          );
+        }
+      }
+    }
+    return urls;
+  }
+
+  void _startProduct() {
+    if (!_canEdit('stock')) return;
+    final draft = Product(
+      id: 'product-${DateTime.now().microsecondsSinceEpoch}',
+      name: '',
+      sku: nextProductSku(products.map((item) => item.sku)),
+      deliveryId: selectedDeliveryId,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    unawaited(_openProductEditor(draft, isNew: true));
+  }
+
+  /// Открывает полноэкранный редактор товара.
+  Future<void> _openProductEditor(
+    Product product, {
+    required bool isNew,
+  }) async {
+    if (!_canEdit('stock')) return;
+    await _dbg(
+      'editor: open (isNew=$isNew, catalog=${avitoCatalogData == null ? "null" : avitoCatalogData!.categories.length} cats, tree=${avitoCatalogData?.tree.length ?? -1})',
+    );
+    if (avitoCatalogData == null) unawaited(_refreshAvitoCatalog());
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProductEditorScreen(
+          product: product,
+          isNew: isNew,
+          catalog: avitoCatalogData,
+          catalogLoaded: avitoCatalogLoaded,
+          onLoadCatalog: () async {
+            // Дерево и категории уже на сервере: быстрый запрос, без API Авито.
+            await _refreshAvitoCatalog(force: true);
+            if (avitoCatalogData == null || avitoCatalogData!.tree.isEmpty) {
+              await _loadAvitoCatalogTree();
+            }
+            return avitoCatalogData;
+          },
+          onLoadFields: _loadAvitoCategoryFields,
+          onLoadCategories: (String parent) async {
+            final cacheName = 'children_${parent.isEmpty ? 'root' : parent}';
+            final cached = await _readAvitoCache(cacheName);
+            if (cached is List) {
+              return cached
+                  .whereType<Map>()
+                  .map(
+                    (item) => (
+                      name: '${item['name'] ?? ''}',
+                      slug: '${item['slug'] ?? ''}',
+                      hasChildren: item['hasChildren'] == true,
+                      hasFields: item['hasFields'] == true,
+                    ),
+                  )
+                  .toList(growable: false);
+            }
+            final service = _authService;
+            final session = _session;
+            if (service == null || session == null) return const [];
+            final result = await service.avitoCatalogChildren(
+              session.token,
+              parent: parent,
+            );
+            final items = result['items'];
+            if (items is! List) return const [];
+            final parsed = items
+                .whereType<Map>()
+                .map(
+                  (item) => (
+                    name: '${item['name'] ?? ''}',
+                    slug: '${item['slug'] ?? ''}',
+                    hasChildren: item['hasChildren'] == true,
+                    hasFields: item['hasFields'] == true,
+                  ),
+                )
+                .toList(growable: false);
+            await _writeAvitoCache(cacheName, [
+              for (final item in parsed)
+                {
+                  'name': item.name,
+                  'slug': item.slug,
+                  'hasChildren': item.hasChildren,
+                  'hasFields': item.hasFields,
+                },
+            ]);
+            return parsed;
+          },
+          onSearchCategories: (String query) async {
+            final service = _authService;
+            final session = _session;
+            if (service == null || session == null) return const [];
+            final result = await service.avitoCatalogSearch(
+              session.token,
+              query,
+            );
+            final items = result['items'];
+            if (items is! List) return const [];
+            return items
+                .whereType<Map>()
+                .map(
+                  (item) => (
+                    name: '${item['name'] ?? ''}',
+                    slug: '${item['slug'] ?? ''}',
+                    hasChildren: false,
+                    hasFields: true,
+                  ),
+                )
+                .toList(growable: false);
+          },
+          deliveries: deliveries,
+          mediaBaseUrl: syncEndpoint,
+          onSave: _saveProduct,
+          isSkuTaken: (value) => products.any(
+            (other) => other.id != product.id && skuEquals(other.sku, value),
+          ),
+          onDelete: isNew ? null : _deleteProduct,
+          onUploadPhotos: _uploadProductPhotos,
+          onSyncCatalog: () async {
+            final hasTree = (avitoCatalogData?.tree ?? const []).isNotEmpty;
+            if (!hasTree) {
+              await _loadAvitoCatalogTree();
+            } else {
+              await _syncAvitoCatalogFromVps();
+            }
+          },
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  void _closeProductDraft() {
+    setState(() => productDraft = null);
+    unawaited(prefs.remove('crm_product_draft'));
+  }
+
+  Future<void> _saveProduct(Product item) async {
+    final index = products.indexWhere((value) => value.id == item.id);
+    if (index >= 0) {
+      products[index] = item;
+    } else {
+      products.add(item);
+    }
+    if (productDraft?.id == item.id) productDraft = item;
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Товар ${item.id}');
+  }
+
+  void _normalizeProductSkus() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var changed = false;
+    for (final product in products) {
+      final normalized = normalizeSku(product.sku);
+      if (normalized != product.sku) {
+        product
+          ..sku = normalized
+          ..updatedAt = now;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    localChangeQueue.enqueue(
+      entity: 'Товар на продажу',
+      details: 'Нумерация артикулов',
+      payload: _syncPayload('Товар на продажу'),
+    );
+    unawaited(
+      prefs.setString(
+        'crm_products',
+        jsonEncode(products.map((p) => p.toJson()).toList()),
+      ),
+    );
+    unawaited(
+      prefs.setString('pending_changes', jsonEncode(localChangeQueue.toJson())),
+    );
+  }
+
+  bool _mergeDuplicateDeliveries({bool persist = true}) {
+    final winners = <int, Delivery>{};
+    for (final delivery in deliveries) {
+      final current = winners[delivery.number];
+      if (current == null || delivery.totalCost > current.totalCost) {
+        winners[delivery.number] = delivery;
+      }
+    }
+    if (winners.length == deliveries.length) return false;
+    final winnerIds = winners.values.map((d) => d.id).toSet();
+    final remap = <String, String>{
+      for (final delivery in deliveries)
+        if (!winnerIds.contains(delivery.id))
+          delivery.id: winners[delivery.number]!.id,
+    };
+    deliveries
+      ..clear()
+      ..addAll(deliveries.where((d) => winnerIds.contains(d.id)));
+    deletedDeliveryIds.addAll(remap.keys);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final product in products) {
+      final replacement = remap[product.deliveryId];
+      if (replacement != null) {
+        product
+          ..deliveryId = replacement
+          ..updatedAt = now;
+      }
+    }
+    final selectedReplacement = remap[selectedDeliveryId];
+    if (selectedReplacement != null) selectedDeliveryId = selectedReplacement;
+    if (persist) {
+      unawaited(_saveCrmData());
+      _enqueueCloudSnapshot('Поставка', 'Объединены дубли поставок');
+      _enqueueCloudSnapshot('Товар на продажу', 'Объединены дубли поставок');
+    }
+    return true;
+  }
+
+  Future<void> _deleteDelivery(Delivery delivery) async {
+    if (!_canEdit('stock')) return;
+    final count = products.where((p) => p.deliveryId == delivery.id).length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить поставку?'),
+        content: Text(
+          count == 0
+              ? 'Поставка #${delivery.number} будет удалена.'
+              : 'Поставка #${delivery.number} будет удалена. Товары ($count) останутся в каталоге без поставки.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    deliveries.removeWhere((d) => d.id == delivery.id);
+    deletedDeliveryIds.add(delivery.id);
+    for (final product in products.where((p) => p.deliveryId == delivery.id)) {
+      product.deliveryId = '';
+    }
+    if (selectedDeliveryId == delivery.id) selectedDeliveryId = '';
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Поставка', 'Поставка ${delivery.id}');
+    _enqueueCloudSnapshot('Товар на продажу', 'Товары поставки ${delivery.id}');
+  }
+
+  Future<void> _editDelivery([Delivery? existing]) async {
+    if (!_canEdit('stock')) return;
+    final name = TextEditingController(text: existing?.name ?? '');
+    final date = TextEditingController(
+      text: existing?.date ?? DateTime.now().toIso8601String().split('T').first,
+    );
+    final supplier = TextEditingController(text: existing?.supplier ?? '');
+    final comment = TextEditingController(text: existing?.comment ?? '');
+    final cost = TextEditingController(
+      text: existing == null || existing.totalCost == 0
+          ? ''
+          : '${existing.totalCost}',
+    );
+    var trackCost = existing?.trackItemCost ?? true;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            existing == null ? 'Новая поставка' : 'Изменить поставку',
+          ),
+          content: SizedBox(
+            width: 460,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: 'Название'),
+                  ),
+                  TextField(
+                    controller: date,
+                    decoration: const InputDecoration(
+                      labelText: 'Дата (ГГГГ-ММ-ДД)',
+                    ),
+                  ),
+                  TextField(
+                    controller: supplier,
+                    decoration: const InputDecoration(labelText: 'Поставщик'),
+                  ),
+                  TextField(
+                    controller: comment,
+                    decoration: const InputDecoration(labelText: 'Комментарий'),
+                  ),
+                  TextField(
+                    controller: cost,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Стоимость поставки, ₽',
+                    ),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Учитывать себестоимость товаров'),
+                    value: trackCost,
+                    onChanged: (value) =>
+                        setDialogState(() => trackCost = value),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true || !mounted) return;
+    final number =
+        existing?.number ??
+        (deliveries.isEmpty
+            ? 1
+            : deliveries.map((d) => d.number).reduce((a, b) => a > b ? a : b) +
+                  1);
+    final delivery = Delivery(
+      id: existing?.id ?? 'delivery-${DateTime.now().microsecondsSinceEpoch}',
+      number: number,
+      name: name.text.trim(),
+      date: date.text.trim(),
+      supplier: supplier.text.trim(),
+      comment: comment.text.trim(),
+      totalCost: double.tryParse(cost.text.trim().replaceAll(',', '.')) ?? 0,
+      trackItemCost: trackCost,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    final index = deliveries.indexWhere((d) => d.id == delivery.id);
+    if (index >= 0) {
+      deliveries[index] = delivery;
+    } else {
+      deliveries.insert(0, delivery);
+    }
+    setState(() => selectedDeliveryId = delivery.id);
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Поставка', 'Поставка ${delivery.id}');
+  }
+
+  Future<void> _updateProductSalePrice(Product product, double price) async {
+    if (!_canEdit('stock') || price < 0) return;
+    setState(() {
+      product
+        ..salePrice = price
+        ..sold = true
+        ..status = 'sold'
+        ..soldAt = product.soldAt > 0
+            ? product.soldAt
+            : DateTime.now().millisecondsSinceEpoch
+        ..updatedAt = DateTime.now().millisecondsSinceEpoch;
+    });
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Цена продажи ${product.sku}');
+  }
+
+  Future<void> _applySale(List<Product> targets, double percent) async {
+    if (!_canEdit('stock') || targets.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var changed = 0;
+    for (final product in targets) {
+      if (percent <= 0) {
+        if (product.saleBasePrice > 0) {
+          product.marketplacePrice = product.saleBasePrice;
+        }
+        product
+          ..salePercent = 0
+          ..saleBasePrice = 0
+          ..myPriceOverride = null
+          ..updatedAt = now;
+        changed++;
+        continue;
+      }
+      final base = product.saleBasePrice > 0
+          ? product.saleBasePrice
+          : product.marketplacePrice;
+      if (base <= 0) continue;
+      product
+        ..saleBasePrice = base
+        ..salePercent = percent
+        ..marketplacePrice = base * (1 - percent / 100)
+        ..myPriceOverride = base * (1 - percent / 100)
+        ..updatedAt = now;
+      changed++;
+    }
+    setState(() {});
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Распродажа');
+    var apiUpdated = 0;
+    try {
+      final token = await _avitoAccessToken();
+      for (final product in targets) {
+        final itemId = int.tryParse(product.avitoItemId);
+        if (itemId == null) continue;
+        final price = product.marketplacePrice.round();
+        if (price <= 0) continue;
+        final response = await http
+            .post(
+              Uri.parse(
+                'https://api.avito.ru/core/v1/items/$itemId/update_price',
+              ),
+              headers: {
+                'authorization': 'Bearer $token',
+                'content-type': 'application/json',
+              },
+              body: jsonEncode({'price': price}),
+            )
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode == 200) apiUpdated++;
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          percent <= 0
+              ? 'Скидка снята с $changed товаров'
+              : 'Скидка $percent% применена к $changed товарам'
+                    '${apiUpdated > 0 ? ', на Авито обновлено $apiUpdated' : ''}',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _bulkUpdateProducts(
+    List<Product> targets, {
+    String? status,
+    String? deliveryId,
+    String? category,
+  }) async {
+    if (!_canEdit('stock') || targets.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final product in targets) {
+      if (status != null && status != product.status) {
+        product.recordStatusEvent(status, product.quantity);
+        product
+          ..status = status
+          ..sold = status == 'sold'
+          ..soldAt = status == 'sold' ? now : 0;
+      }
+      if (deliveryId != null) product.deliveryId = deliveryId;
+      if (category != null && category.trim().isNotEmpty) {
+        product.category = category.trim();
+      }
+      product.updatedAt = now;
+    }
+    setState(() {});
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Массовое изменение товаров');
+  }
+
+  String _avitoOrderStatus(String status) => switch (status) {
+    'on_confirmation' || 'confirming' => 'new',
+    'ready_to_ship' => 'paid',
+    'in_transit' => 'shipped',
+    'on_return' => 'returned',
+    'delivered' || 'closed' => 'done',
+    'canceled' => 'canceled',
+    'in_dispute' => 'paid',
+    _ => 'new',
+  };
+
+  String _normalizeOrderTitle(String value) =>
+      value.toLowerCase().replaceAll(RegExp(r'[^a-zа-я0-9]+'), '');
+
+  static const _orderLinkPrefsKey = 'crm_order_title_sku';
+
+  /// Сопоставляет заказ с товаром CRM: по сохранённой привязке, затем по
+  /// названию; при неоднозначности выбирает ближайший по цене.
+  Product? _matchProductForOrder(String title, double amount) {
+    final target = _normalizeOrderTitle(title);
+    if (target.isEmpty) return null;
+    try {
+      final raw = prefs.getString(_orderLinkPrefsKey);
+      if (raw != null && raw.isNotEmpty) {
+        final map = jsonDecode(raw);
+        if (map is Map) {
+          final sku = '${map[target] ?? ''}'.trim();
+          if (sku.isNotEmpty) {
+            for (final product in products) {
+              if (product.sku == sku) return product;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    final exact = products
+        .where((p) => _normalizeOrderTitle(p.name) == target)
+        .toList();
+    final candidates = exact.isNotEmpty
+        ? exact
+        : products.where((p) {
+            final name = _normalizeOrderTitle(p.name);
+            return name.isNotEmpty &&
+                (target.contains(name) || name.contains(target));
+          }).toList();
+    if (candidates.isEmpty) return null;
+    if (candidates.length == 1) return candidates.first;
+    return null; // Не назначаем товар при неоднозначном совпадении.
+  }
+
+  /// Запоминает подтверждённую пользователем связь «название заказа → SKU».
+  Future<void> _rememberOrderLink(String title, String sku) async {
+    final target = _normalizeOrderTitle(title);
+    if (target.isEmpty) return;
+    try {
+      final raw = prefs.getString(_orderLinkPrefsKey);
+      final map = raw == null || raw.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(raw);
+      if (map is Map) {
+        final updated = Map<String, dynamic>.from(map);
+        if (sku.isEmpty) {
+          updated.remove(target);
+        } else {
+          updated[target] = sku;
+        }
+        await prefs.setString(_orderLinkPrefsKey, jsonEncode(updated));
+      }
+    } catch (_) {}
+  }
+
+  String _articleForTitle(String title) {
+    final target = _normalizeOrderTitle(title);
+    if (target.isEmpty) return '';
+    final candidates = <Product>[];
+    for (final product in products) {
+      final name = _normalizeOrderTitle(product.name);
+      if (name.isEmpty) continue;
+      if (target == name || target.contains(name) || name.contains(target)) {
+        candidates.add(product);
+      }
+    }
+    if (candidates.isEmpty) return '';
+    final exact = candidates.where(
+      (p) => _normalizeOrderTitle(p.name) == target,
+    );
+    if (exact.length == 1) return exact.first.sku;
+    if (candidates.length == 1) return candidates.first.sku;
+    return '';
+  }
+
+  Future<Map<String, String>> _avitoOrderExtra(String id) async {
+    const js =
+        r'''(()=>{const b=document.body.innerText;const m=b.match(/Назовите номер заказа:\s*([\d\s]+)/);const lines=b.split('\n').map(s=>s.trim());let pvz='';for(const line of lines){if(/^г\s.+,\s*ул/i.test(line)){pvz=line;break;}}return JSON.stringify({barcode:m?m[1].replace(/\s+/g,''):'',pvz})})()''';
+    final encoded = base64Encode(utf8.encode(js));
+    final script =
+        '''
+tell application "Safari"
+  launch
+  make new document with properties {URL:"https://www.avito.ru/orders/$id?source=orders_list"}
+  set w to front window
+  set miniaturized of w to true
+  delay 4
+  set t to current tab of w
+  set r to do JavaScript "eval(atob('$encoded'))" in t
+  close w
+  return r
+end tell
+''';
+    final result = await Process.run('osascript', [
+      '-e',
+      script,
+    ]).timeout(const Duration(seconds: 40));
+    if (result.exitCode != 0) return const {};
+    try {
+      final data = jsonDecode(result.stdout.toString());
+      if (data is Map) {
+        return {
+          'barcode': '${data['barcode'] ?? ''}',
+          'pvz': '${data['pvz'] ?? ''}',
+        };
+      }
+    } catch (_) {}
+    return const {};
+  }
+
+  Future<Map<String, Map<String, String>>> _avitoOrderDetails(
+    List<String> ids,
+  ) async {
+    if (ids.isEmpty) return const {};
+    final extract = base64Encode(
+      utf8.encode(
+        r'''(()=>{const b=document.body.innerText;const m=b.match(/Назовите (?:номер заказа|этот номер):\s*([\d\s]+)/);const lines=b.split('\n').map(s=>s.trim());let pvz='';for(const l of lines){if(/^г\s.+,\s*ул/i.test(l)){pvz=l;break;}}const id=(location.pathname.match(/\/orders\/(\d+)/)||[])[1]||'';const itemIds=[...new Set((window.__crmOrderLinks||[]).map(u=>(String(u).match(/(?:\/|_)(\d{7,})(?:[/?#]|$)/)||[])[1]).filter(Boolean))];if(window.__crmOriginalOpen)window.open=window.__crmOriginalOpen;return JSON.stringify({id,barcode:m?m[1].replace(/\s+/g,''):'',pvz,itemIds:itemIds.join(',')})})()''',
+      ),
+    );
+    final lines = StringBuffer();
+    for (final id in ids) {
+      final click = base64Encode(
+        utf8.encode(
+          "document.querySelector('a[href^=\"/orders/$id\"]')?.click()",
+        ),
+      );
+      final order = orders.firstWhere((o) => o.id == 'avito-$id');
+      final titleJson = jsonEncode(order.product);
+      final capture = base64Encode(
+        utf8.encode(
+          '''(()=>{const title=$titleJson;const found=[...document.querySelectorAll("span")].filter(e=>e.textContent.trim()===title);window.__crmOrderLinks=[];window.__crmOriginalOpen=window.open;window.open=(url)=>{window.__crmOrderLinks.push(String(url));return null};if(found.length===1)found[0].click();return found.length})()''',
+        ),
+      );
+      lines.writeln('''
+  do JavaScript "eval(atob('$click'))" in t
+  delay 5
+  do JavaScript "eval(atob('$capture'))" in t
+  delay 2
+  set part to do JavaScript "eval(atob('$extract'))" in t
+  set out to out & part & linefeed
+  do JavaScript "history.back()" in t
+  delay 2''');
+    }
+    final script =
+        '''
+tell application "Safari"
+  launch
+  make new document with properties {URL:"https://www.avito.ru/orders?source=sidebar"}
+  set w to front window
+  set miniaturized of w to true
+  delay 9
+  set t to current tab of w
+  set out to ""
+$lines
+  close w
+  return out
+end tell
+''';
+    final result = await Process.run('osascript', [
+      '-e',
+      script,
+    ]).timeout(Duration(seconds: 30 + ids.length * 12));
+    if (result.exitCode != 0) return const {};
+    final out = <String, Map<String, String>>{};
+    for (final line in result.stdout.toString().split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      try {
+        final data = jsonDecode(trimmed);
+        if (data is Map && '${data['id'] ?? ''}'.isNotEmpty) {
+          out['${data['id']}'] = {
+            'barcode': '${data['barcode'] ?? ''}',
+            'pvz': '${data['pvz'] ?? ''}',
+            'itemIds': '${data['itemIds'] ?? ''}',
+          };
+        }
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  Future<void> _loadAvitoOrdersViaSafari() async {
+    if (!Platform.isMacOS) return;
+    BuildContext? progress;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          progress = ctx;
+          return const AlertDialog(
+            title: Text('Заказы Авито'),
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Text('Читаю заказы в Safari…'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    try {
+      const js =
+          r'''(()=>{const rows=Array.from(document.querySelectorAll('[data-marker="order-row"]')).map(e=>{const a=e.querySelector('a[href^="/orders/"]');const href=a?a.getAttribute('href'):'';const m=href.match(/\/orders\/(\d+)/);const img=e.querySelector('img');return {id:m?m[1]:'',text:(e.innerText||'').replace(/\n+/g,' | '),title:img?(img.getAttribute('alt')||''):''};}).filter(r=>r.id);return JSON.stringify(rows)})()''';
+      final encoded = base64Encode(utf8.encode(js));
+      final script =
+          '''
+tell application "Safari"
+  launch
+  make new document with properties {URL:"https://www.avito.ru/orders?source=sidebar"}
+  set w to front window
+  set miniaturized of w to true
+  delay 9
+  set t to current tab of w
+  set r to do JavaScript "eval(atob('$encoded'))" in t
+  close w
+  return r
+end tell
+''';
+      final result = await Process.run('osascript', [
+        '-e',
+        script,
+      ]).timeout(const Duration(minutes: 2));
+      if (result.exitCode != 0) {
+        throw StateError(CrmLogger.redact(result.stderr.toString()));
+      }
+      final rows = jsonDecode(result.stdout.toString());
+      if (rows is! List) throw StateError('Не удалось прочитать заказы');
+      final counts = _applyAvitoOrderRows(rows);
+      // Штрихкоды для отправки: читаем страницы заказов, у которых их ещё нет.
+      try {
+        final loadedIds = rows
+            .whereType<Map>()
+            .map((r) => '${r['id'] ?? ''}')
+            .toSet();
+        final need = orders
+            .where(
+              (o) =>
+                  o.source == 'avito' &&
+                  loadedIds.contains(o.id.replaceFirst('avito-', '')) &&
+                  (o.barcode.isEmpty || o.article.isEmpty),
+            )
+            .map((o) => o.id.replaceFirst('avito-', ''))
+            .toList();
+        if (need.isNotEmpty) {
+          final details = await _avitoOrderDetails(need);
+          for (final entry in details.entries) {
+            final order = orders.firstWhere(
+              (o) => o.id == 'avito-${entry.key}',
+              orElse: () => Order(id: ''),
+            );
+            if (order.id.isEmpty) continue;
+            final itemIds = (entry.value['itemIds'] ?? '')
+                .split(',')
+                .where((id) => id.isNotEmpty)
+                .toSet();
+            final matches = products
+                .where(
+                  (p) =>
+                      itemIds.contains(p.avitoItemId) &&
+                      p.sku.trim().isNotEmpty,
+                )
+                .map((p) => p.sku.trim())
+                .toSet();
+            if (matches.length == 1 && order.article.isEmpty) {
+              order.article = matches.single;
+            }
+            if ('${entry.value['barcode'] ?? ''}'.isNotEmpty) {
+              order.barcode = '${entry.value['barcode']}';
+            }
+            if ('${entry.value['pvz'] ?? ''}'.isNotEmpty) {
+              order.pvz = '${entry.value['pvz']}';
+            }
+          }
+        }
+      } catch (error) {
+        await _dbg('orders: barcode fetch failed ${error.runtimeType}');
+      }
+      ordersAvitoSyncedAt = DateTime.now().millisecondsSinceEpoch;
+      await _saveCrmData();
+      _enqueueCloudSnapshot('Заказ', 'Заказы из Авито (Safari)');
+      if (progress != null && progress!.mounted) {
+        Navigator.of(progress!).pop();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Заказы Авито: получено ${rows.length}, новых ${counts.added}, '
+            'обновлено ${counts.updated}',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (progress != null && progress!.mounted) {
+        Navigator.of(progress!).pop();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Не удалось прочитать заказы в Safari: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Применяет строки заказов Авито (id/text/title) к локальному списку.
+  ///
+  /// Используется и Safari-путём, и серверной загрузкой (fetchAvitoOrders),
+  /// чтобы статусы, суммы и сроки разбирались одинаково на любом устройстве.
+  /// Возвращает {added, updated}. Существующие barcode/pvz сохраняются.
+  ({int added, int updated}) _applyAvitoOrderRows(List<dynamic> rows) {
+    final now = DateTime.now();
+    final today =
+        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    var added = 0;
+    var updated = 0;
+    for (final raw in rows.whereType<Map>()) {
+      final item = Map<String, dynamic>.from(raw);
+      final avitoId = '${item['id'] ?? ''}';
+      if (avitoId.isEmpty) continue;
+      final text = '${item['text'] ?? ''}';
+      final parts = text
+          .split(' | ')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      final statusText = parts.isEmpty ? '' : parts.first;
+      final deadlineRaw = parts.firstWhere(
+        (p) => p.startsWith('До ') || p.contains('срок доставки'),
+        orElse: () => '',
+      );
+      final deadline = deadlineRaw
+          .replaceFirst('Примерный срок доставки — ', '')
+          .trim();
+      final amountMatch = RegExp(r'([\d\s\u00a0]+)\s*₽').firstMatch(text);
+      final amount = amountMatch == null
+          ? 0.0
+          : _excelNumber(amountMatch.group(1)!) ?? 0;
+      final services = [
+        'Почта России',
+        'Яндекс Доставка',
+        'СДЭК',
+        'Boxberry',
+        'DHL',
+        'Авито',
+      ];
+      final service = services.firstWhere(
+        (s) => parts.contains(s) || text.contains(s),
+        orElse: () => '',
+      );
+      // Номер для отправки (штрихкод) идёт в строке сразу после службы.
+      var shippingCode = '';
+      final serviceIndex = parts.indexOf(service);
+      if (serviceIndex >= 0 && serviceIndex + 1 < parts.length) {
+        final candidate = parts[serviceIndex + 1].trim();
+        final cleaned = candidate.replaceAll(RegExp(r'[\s\u00a0]'), '');
+        if (RegExp(r'^[A-Za-zА-Яа-я0-9]{6,24}$').hasMatch(cleaned)) {
+          shippingCode = cleaned;
+        }
+      }
+      final isReturn =
+          statusText.contains('Возврат') ||
+          statusText.contains('Закрыт после возврата') ||
+          statusText.contains('Заберите заказ');
+      final status = statusText.contains('Отменён')
+          ? 'canceled'
+          : isReturn
+          ? 'returned'
+          : statusText.contains('Завершён') || statusText.contains('Закрыт')
+          ? 'done'
+          : statusText.contains('Едет') || statusText.contains('Ждёт выдачи')
+          ? 'shipped'
+          : 'new';
+      final id = 'avito-$avitoId';
+      final existingIndex = orders.indexWhere((o) => o.id == id);
+      final existing = existingIndex >= 0 ? orders[existingIndex] : null;
+      // Жёсткая связка с CRM: по ID объявления Авито, затем по названию.
+      final itemId = '${item['itemId'] ?? ''}'.trim();
+      var article = '';
+      if (itemId.isNotEmpty) {
+        for (final product in products) {
+          if (product.avitoItemId == itemId) {
+            article = product.sku;
+            break;
+          }
+        }
+      }
+
+      if (article.isEmpty) article = existing?.article ?? '';
+      // Приоритет: полный штрихкод из карточки → номер из строки списка →
+      // то, что уже сохранено в CRM.
+      final serverBarcode = '${item['barcode'] ?? ''}'.trim();
+      final barcode = serverBarcode.isNotEmpty
+          ? serverBarcode
+          : (shippingCode.isNotEmpty
+                ? shippingCode
+                : (existing?.barcode ?? ''));
+      final pvz = '${item['pvz'] ?? ''}'.trim().isNotEmpty
+          ? '${item['pvz']}'.trim()
+          : (existing?.pvz ?? '');
+      final order = Order(
+        id: id,
+        number: int.tryParse(avitoId) ?? 0,
+        date: today,
+        product: '${item['title'] ?? ''}',
+        article: article,
+        barcode: barcode,
+        pvz: pvz,
+        quantity: 1,
+        amount: amount,
+        status: status,
+        source: 'avito',
+        comment: [statusText, if (service.isNotEmpty) service].join(' · '),
+        avitoStatus: statusText,
+        avitoDeadline: deadline,
+        updatedAt: now.millisecondsSinceEpoch,
+      );
+      if (existingIndex >= 0) {
+        orders[existingIndex] = order;
+        updated++;
+      } else {
+        orders.add(order);
+        added++;
+      }
+    }
+    return (added: added, updated: updated);
+  }
+
+  /// Обновляет заказы Авито через сервер VPS (headless-Chromium), чтобы
+  /// обновлять их с телефона без Safari на Mac и без «Авито Доставки для
+  /// бизнеса». Список применяется той же логикой, что и локальный Safari-путь,
+  /// затем сохраняется локально и публикуется в облачный снимок.
+  Future<void> _loadAvitoOrders() async {
+    final clientId = await secretStore.read('avito_client_id') ?? '';
+    final clientSecret = await secretStore.read('avito_client_secret') ?? '';
+    if (clientId.isEmpty || clientSecret.isEmpty) {
+      await _loadAvitoOrdersViaSafari();
+      return;
+    }
+    BuildContext? progress;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          progress = ctx;
+          return const AlertDialog(
+            title: Text('Заказы Авито'),
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Text('Загружаю заказы…'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    try {
+      final tokenResponse = await http
+          .post(
+            Uri.parse('https://api.avito.ru/token'),
+            headers: const {
+              'content-type': 'application/x-www-form-urlencoded',
+            },
+            body: {
+              'grant_type': 'client_credentials',
+              'client_id': clientId,
+              'client_secret': clientSecret,
+            },
+          )
+          .timeout(const Duration(seconds: 30));
+      if (tokenResponse.statusCode != 200) {
+        throw StateError(
+          'Не удалось получить токен: ${tokenResponse.statusCode} ${tokenResponse.body}',
+        );
+      }
+      final token = (jsonDecode(tokenResponse.body) as Map)['access_token'];
+      if (token == null) throw StateError('В ответе нет access_token');
+      final dateFrom =
+          DateTime.now()
+              .subtract(const Duration(days: 180))
+              .millisecondsSinceEpoch ~/
+          1000;
+      final fetched = <Map<String, dynamic>>[];
+      for (var page = 1; page <= 50; page++) {
+        final uri = Uri.https('api.avito.ru', '/order-management/1/orders', {
+          'page': '$page',
+          'limit': '20',
+          'dateFrom': '$dateFrom',
+        });
+        final response = await http
+            .get(uri, headers: {'authorization': 'Bearer $token'})
+            .timeout(const Duration(seconds: 30));
+        if (response.statusCode == 403) {
+          throw StateError(
+            'API заказов работает только с «Авито Доставкой для бизнеса». '
+            'Укажите реквизиты компании и подключите тариф в разделе '
+            '«Авито Доставка» личного кабинета.',
+          );
+        }
+        if (response.statusCode != 200) {
+          throw StateError(
+            'Ошибка заказов ${response.statusCode}: ${response.body}',
+          );
+        }
+        final body = jsonDecode(response.body) as Map;
+        final ordersJson = (body['orders'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        fetched.addAll(ordersJson);
+        if (body['hasMore'] != true || ordersJson.isEmpty) break;
+      }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      var added = 0;
+      var updated = 0;
+      for (final raw in fetched) {
+        final avitoId = '${raw['id']}';
+        if (avitoId.isEmpty) continue;
+        final items = (raw['items'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        final prices = raw['prices'] is Map
+            ? Map<String, dynamic>.from(raw['prices'] as Map)
+            : <String, dynamic>{};
+        final delivery = raw['delivery'] is Map
+            ? Map<String, dynamic>.from(raw['delivery'] as Map)
+            : <String, dynamic>{};
+        final buyer = delivery['buyerInfo'] is Map
+            ? Map<String, dynamic>.from(delivery['buyerInfo'] as Map)
+            : <String, dynamic>{};
+        final title = items
+            .map((item) => '${item['title'] ?? ''}')
+            .where((value) => value.isNotEmpty)
+            .join(', ');
+        final quantity = items.fold<double>(
+          0,
+          (sum, item) => sum + ((item['count'] as num?)?.toDouble() ?? 0),
+        );
+        final articles = <String>[];
+        for (final item in items) {
+          final listingId = '${item['avitoId'] ?? ''}';
+          if (listingId.isEmpty) continue;
+          for (final product in products) {
+            if (product.avitoItemId == listingId &&
+                product.sku.isNotEmpty &&
+                !articles.contains(product.sku)) {
+              articles.add(product.sku);
+            }
+          }
+        }
+        final article = articles.isNotEmpty
+            ? articles.join(', ')
+            : _articleForTitle(title);
+        final createdAt = '${raw['createdAt'] ?? ''}';
+        final id = 'avito-$avitoId';
+        final index = orders.indexWhere((order) => order.id == id);
+        final existing = index >= 0 ? orders[index] : null;
+        final mapped = Order(
+          id: id,
+          number:
+              int.tryParse('${raw['marketplaceId'] ?? avitoId}') ??
+              int.tryParse(avitoId) ??
+              0,
+          date: createdAt.length >= 10 ? createdAt.substring(0, 10) : createdAt,
+          customer: '${buyer['fullName'] ?? ''}',
+          phone: '${buyer['phoneNumber'] ?? ''}',
+          product: title,
+          article: article,
+          barcode: existing?.barcode ?? '',
+          pvz: existing?.pvz ?? '',
+          quantity: quantity == 0 ? 1 : quantity,
+          amount:
+              (prices['price'] as num?)?.toDouble() ??
+              (prices['total'] as num?)?.toDouble() ??
+              0,
+          status: _avitoOrderStatus('${raw['status'] ?? ''}'),
+          source: 'avito',
+          comment: 'Статус Авито: ${raw['status'] ?? ''}',
+          updatedAt: now,
+        );
+        if (index >= 0) {
+          orders[index] = mapped;
+          updated++;
+        } else {
+          orders.add(mapped);
+          added++;
+        }
+      }
+      ordersAvitoSyncedAt = DateTime.now().millisecondsSinceEpoch;
+      await _saveCrmData();
+      _enqueueCloudSnapshot('Заказ', 'Заказы из Авито');
+      if (progress != null && progress!.mounted) {
+        Navigator.of(progress!).pop();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Заказы Авито: получено ${fetched.length}, новых $added, обновлено $updated',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (progress != null && progress!.mounted) {
+        Navigator.of(progress!).pop();
+      }
+      final message = CrmLogger.redact(error.toString());
+      if (message.contains('Авито Доставкой') || message.contains('403')) {
+        await _loadAvitoOrdersViaSafari();
+        return;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка загрузки заказов: $message')),
+        );
+      }
+    }
+  }
+
+  Future<Order?> _editOrder(Order? existing) async {
+    final customer = TextEditingController(text: existing?.customer ?? '');
+    final phone = TextEditingController(text: existing?.phone ?? '');
+    final product = TextEditingController(text: existing?.product ?? '');
+    final article = TextEditingController(text: existing?.article ?? '');
+    final barcode = TextEditingController(text: existing?.barcode ?? '');
+    final pvz = TextEditingController(text: existing?.pvz ?? '');
+    final quantity = TextEditingController(
+      text: existing == null ? '1' : _orderQuantity(existing.quantity),
+    );
+    final amount = TextEditingController(
+      text: existing == null ? '' : existing.amount.toStringAsFixed(0),
+    );
+    final comment = TextEditingController(text: existing?.comment ?? '');
+    var status = existing?.status ?? 'new';
+    var source = existing?.source ?? 'manual';
+    final result = await showDialog<Order>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(
+            existing == null ? 'Новый заказ' : 'Заказ №${existing.number}',
+          ),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: customer,
+                    decoration: const InputDecoration(labelText: 'Покупатель'),
+                  ),
+                  TextField(
+                    controller: phone,
+                    decoration: const InputDecoration(labelText: 'Телефон'),
+                  ),
+                  TextField(
+                    controller: product,
+                    decoration: const InputDecoration(labelText: 'Товар'),
+                  ),
+                  TextField(
+                    controller: article,
+                    decoration: const InputDecoration(labelText: 'Артикул'),
+                  ),
+                  TextField(
+                    controller: barcode,
+                    decoration: const InputDecoration(labelText: 'Штрихкод'),
+                  ),
+                  TextField(
+                    controller: pvz,
+                    decoration: const InputDecoration(labelText: 'ПВЗ / адрес'),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: quantity,
+                          decoration: const InputDecoration(
+                            labelText: 'Количество',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: amount,
+                          decoration: const InputDecoration(
+                            labelText: 'Сумма, ₽',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: status,
+                    decoration: const InputDecoration(labelText: 'Статус'),
+                    items: const [
+                      DropdownMenuItem(value: 'new', child: Text('Новый')),
+                      DropdownMenuItem(value: 'paid', child: Text('Оплачен')),
+                      DropdownMenuItem(
+                        value: 'shipped',
+                        child: Text('Отправлен'),
+                      ),
+                      DropdownMenuItem(value: 'done', child: Text('Выполнен')),
+                      DropdownMenuItem(
+                        value: 'canceled',
+                        child: Text('Отменён'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'returned',
+                        child: Text('Возврат'),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => status = value ?? 'new'),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: source,
+                    decoration: const InputDecoration(labelText: 'Источник'),
+                    items: const [
+                      DropdownMenuItem(value: 'manual', child: Text('Вручную')),
+                      DropdownMenuItem(value: 'avito', child: Text('Авито')),
+                      DropdownMenuItem(value: 'wb', child: Text('Wildberries')),
+                      DropdownMenuItem(value: 'ozon', child: Text('Ozon')),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => source = value ?? 'manual'),
+                  ),
+                  TextField(
+                    controller: comment,
+                    maxLines: 2,
+                    decoration: const InputDecoration(labelText: 'Комментарий'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final now = DateTime.now();
+                final order = Order(
+                  id: existing?.id ?? 'order-${now.microsecondsSinceEpoch}',
+                  number:
+                      existing?.number ??
+                      (orders.isEmpty
+                          ? 1
+                          : orders
+                                    .map((o) => o.number)
+                                    .reduce((a, b) => a > b ? a : b) +
+                                1),
+                  date:
+                      existing?.date ??
+                      '${now.year.toString().padLeft(4, '0')}-'
+                          '${now.month.toString().padLeft(2, '0')}-'
+                          '${now.day.toString().padLeft(2, '0')}',
+                  customer: customer.text.trim(),
+                  phone: phone.text.trim(),
+                  product: product.text.trim(),
+                  article: article.text.trim(),
+                  barcode: barcode.text.trim(),
+                  pvz: pvz.text.trim(),
+                  quantity: _excelNumber(quantity.text) ?? 1,
+                  amount: _excelNumber(amount.text) ?? 0,
+                  status: status,
+                  source: source,
+                  comment: comment.text.trim(),
+                  avitoStatus: existing?.avitoStatus ?? '',
+                  avitoDeadline: existing?.avitoDeadline ?? '',
+                  updatedAt: now.millisecondsSinceEpoch,
+                );
+                Navigator.pop(dialogContext, order);
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    customer.dispose();
+    phone.dispose();
+    product.dispose();
+    article.dispose();
+    barcode.dispose();
+    pvz.dispose();
+    quantity.dispose();
+    amount.dispose();
+    comment.dispose();
+    return result;
+  }
+
+  String _orderQuantity(double value) =>
+      value % 1 == 0 ? value.toInt().toString() : value.toString();
+
+  String _orderStatusLabel(String status) => switch (status) {
+    'paid' => 'Оплачен',
+    'shipped' => 'Отправлен',
+    'done' => 'Выполнен',
+    'canceled' => 'Отменён',
+    'returned' => 'Возврат',
+    _ => 'Новый',
+  };
+
+  String _orderSourceLabel(String source) => switch (source) {
+    'avito' => 'Авито',
+    'wb' => 'WB',
+    'ozon' => 'Ozon',
+    _ => 'Вручную',
+  };
+
+  int get _activeOrdersCount {
+    var count = 0;
+    for (final order in orders) {
+      final text = order.avitoStatus.toLowerCase();
+      if (text.contains('закрыт после возврата')) continue;
+      if (order.status == 'new' ||
+          order.status == 'shipped' ||
+          order.status == 'returned') {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  Future<void> _showOrders() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => OrdersView(
+        orders: orders,
+        lastAvitoSync: ordersAvitoSyncedAt,
+        onClose: () => Navigator.pop(dialogContext),
+        onLoadAvito: () async {
+          // Заказы собираются только локально через Safari на Mac: серверный
+          // сборщик убран по требованию владельца (Авито блокирует IP VPS).
+          await _loadAvitoOrders();
+          if (mounted) setState(() {});
+          return ordersAvitoSyncedAt;
+        },
+        onCreate: () async {
+          final order = await _editOrder(null);
+          if (order == null) return null;
+          setState(() => orders.add(order));
+          await _saveCrmData();
+          _enqueueCloudSnapshot('Заказ', 'Заказ №${order.number}');
+          return order;
+        },
+        onEdit: (order) async {
+          final updated = await _editOrder(order);
+          if (updated == null) return null;
+          setState(() {
+            final index = orders.indexWhere((item) => item.id == updated.id);
+            if (index >= 0) orders[index] = updated;
+          });
+          await _saveCrmData();
+          _enqueueCloudSnapshot('Заказ', 'Заказ №${updated.number}');
+          return updated;
+        },
+        onDelete: (order) async {
+          setState(() {
+            orders.removeWhere((item) => item.id == order.id);
+            deletedOrderIds.add(order.id);
+          });
+          await _saveCrmData();
+          _enqueueCloudSnapshot('Заказ', 'Удалён заказ №${order.number}');
+        },
+        onChanged: () {
+          if (mounted) setState(() {});
+        },
+        onLinkProduct: _linkOrderProduct,
+        productUrlFor: (order) {
+          for (final product in products) {
+            if (product.sku == order.article) {
+              return product.marketplaceUrl;
+            }
+          }
+          return '';
+        },
+      ),
+    );
+  }
+
+  /// Ручная привязка заказа к товару CRM с запоминанием по названию.
+  Future<void> _linkOrderProduct(Order order) async {
+    final controller = TextEditingController();
+    String query = '';
+    final picked = await showDialog<Product>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final list = products
+              .where(
+                (p) =>
+                    query.trim().isEmpty ||
+                    p.name.toLowerCase().contains(query.toLowerCase()) ||
+                    p.sku.toLowerCase().contains(query.toLowerCase()),
+              )
+              .take(50)
+              .toList();
+          return AlertDialog(
+            title: Text(
+              'Связать с товаром CRM\n${order.product}',
+              style: const TextStyle(fontSize: 15),
+            ),
+            content: SizedBox(
+              width: 520,
+              height: 380,
+              child: Column(
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Поиск товара',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (value) => setDialogState(() => query = value),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: list.isEmpty
+                        ? const Center(child: Text('Ничего не найдено'))
+                        : ListView.builder(
+                            itemCount: list.length,
+                            itemBuilder: (context, index) {
+                              final product = list[index];
+                              return ListTile(
+                                dense: true,
+                                title: Text(
+                                  product.name,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  'арт. ${product.sku} · '
+                                  '${product.myPrice.toStringAsFixed(0)} ₽',
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                                onTap: () =>
+                                    Navigator.pop(dialogContext, product),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Отмена'),
+              ),
+              if (order.article.isNotEmpty)
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, null),
+                  child: const Text('Снять связь'),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+    controller.dispose();
+    if (!mounted) return;
+    if (picked == null) {
+      // Отмена без выбора: не трогаем связь.
+      return;
+    }
+    setState(() {
+      order.article = picked.sku;
+      order.updatedAt = DateTime.now().millisecondsSinceEpoch;
+    });
+    await _rememberOrderLink(order.product, picked.sku);
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Заказ', 'Связан с товаром ${picked.sku}');
+  }
+
+  Future<String> _avitoAccessToken() async {
+    final clientId = await secretStore.read('avito_client_id') ?? '';
+    final clientSecret = await secretStore.read('avito_client_secret') ?? '';
+    if (clientId.isEmpty || clientSecret.isEmpty) {
+      throw StateError('Сначала заполните ключи Авито в настройках');
+    }
+    final response = await http
+        .post(
+          Uri.parse('https://api.avito.ru/token'),
+          headers: const {'content-type': 'application/x-www-form-urlencoded'},
+          body: {
+            'grant_type': 'client_credentials',
+            'client_id': clientId,
+            'client_secret': clientSecret,
+          },
+        )
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw StateError('Не удалось получить токен: ${response.statusCode}');
+    }
+    final token = (jsonDecode(response.body) as Map)['access_token'];
+    if (token == null) throw StateError('В ответе Авито нет токена');
+    return '$token';
+  }
+
+  Future<String> _avitoUserId() async {
+    final clientId = await secretStore.read('avito_client_id') ?? '';
+    final raw = await secretStore.read('avito_accounts');
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          for (final item in decoded.whereType<Map>()) {
+            if ('${item['clientId'] ?? ''}' == clientId) {
+              final userId = '${item['userId'] ?? ''}';
+              if (userId.isNotEmpty) return userId;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    final stored = await secretStore.read('avito_user_id') ?? '';
+    if (stored.isNotEmpty) return stored;
+    throw StateError('Не найден ID профиля Авито');
+  }
+
+  Future<double?> _avitoPagePrice(String url) async {
+    const js =
+        r'''(()=>{const p=document.querySelector('[data-marker="item-view/item-price"]');return p?p.innerText.trim():''})()''';
+    final encoded = base64Encode(utf8.encode(js));
+    final script =
+        '''
+tell application "Safari"
+  launch
+  make new document with properties {URL:"$url"}
+  set w to front window
+  set miniaturized of w to true
+  delay 4
+  set t to current tab of w
+  set r to do JavaScript "eval(atob('$encoded'))" in t
+  close w
+  return r
+end tell
+''';
+    final result = await Process.run('osascript', [
+      '-e',
+      script,
+    ]).timeout(const Duration(seconds: 40));
+    if (result.exitCode != 0) return null;
+    return _excelNumber(result.stdout.toString());
+  }
+
+  Future<void> _refreshAvitoRealPrices() async {
+    final targets = products
+        .where((p) => p.marketplaceUrl.contains('avito.ru'))
+        .toList();
+    if (targets.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Нет товаров со ссылками на Авито')),
+        );
+      }
+      return;
+    }
+    final progress = ValueNotifier<double>(0);
+    final status = ValueNotifier<String>('Открываю объявления…');
+    var cancelled = false;
+    BuildContext? dialogContext;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          dialogContext = ctx;
+          return AlertDialog(
+            title: const Text('Реальные цены Авито'),
+            content: SizedBox(
+              width: 420,
+              child: AnimatedBuilder(
+                animation: Listenable.merge([progress, status]),
+                builder: (_, _) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LinearProgressIndicator(value: progress.value),
+                    const SizedBox(height: 10),
+                    Text(
+                      '${(progress.value * 100).round()}%',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(status.value, style: const TextStyle(fontSize: 12)),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => cancelled = true,
+                child: const Text('Остановить'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    var updated = 0;
+    var failed = 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (var index = 0; index < targets.length; index++) {
+      if (cancelled) break;
+      final product = targets[index];
+      status.value = '${product.sku} · ${index + 1} из ${targets.length}';
+      final price = await _avitoPagePrice(product.marketplaceUrl);
+      if (price != null && price > 0) {
+        product
+          ..marketplacePrice = price
+          ..myPriceOverride = price
+          ..updatedAt = now;
+        updated++;
+      } else {
+        failed++;
+      }
+      progress.value = (index + 1) / targets.length;
+    }
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Реальные цены Авито');
+    if (dialogContext != null && dialogContext!.mounted) {
+      Navigator.of(dialogContext!).pop();
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Цены обновлены: $updated, не удалось: $failed'
+          '${cancelled ? ' (остановлено)' : ''}',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _refreshAvitoStats() async {
+    BuildContext? progressContext;
+    final status = ValueNotifier<String>('Получаю токен Авито…');
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          progressContext = ctx;
+          return AlertDialog(
+            title: const Text('Статистика Авито'),
+            content: SizedBox(
+              width: 420,
+              child: AnimatedBuilder(
+                animation: status,
+                builder: (_, _) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 14),
+                    Text(status.value, style: const TextStyle(fontSize: 12)),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final token = await _avitoAccessToken();
+      final userId = await _avitoUserId();
+      status.value = 'Загружаю цены с Авито…';
+      final prices = <int, double>{};
+      for (var page = 1; page <= 30; page++) {
+        final uri = Uri.https('api.avito.ru', '/core/v1/items', {
+          'page': '$page',
+          'per_page': '25',
+        });
+        final response = await http
+            .get(uri, headers: {'authorization': 'Bearer $token'})
+            .timeout(const Duration(seconds: 30));
+        if (response.statusCode != 200) {
+          throw StateError(
+            'Ошибка цен ${response.statusCode}: ${response.body}',
+          );
+        }
+        final body = jsonDecode(response.body) as Map;
+        final resources = (body['resources'] as List? ?? const [])
+            .whereType<Map>()
+            .toList();
+        for (final item in resources) {
+          final itemId = int.tryParse('${item['id'] ?? ''}');
+          final price = (item['price'] as num?)?.toDouble();
+          if (itemId != null && price != null) prices[itemId] = price;
+        }
+        if (resources.length < 25) break;
+      }
+      final itemIds = products
+          .map((item) => int.tryParse(item.avitoItemId))
+          .whereType<int>()
+          .toSet()
+          .toList();
+      status.value = 'Загружаю статистику (${itemIds.length})…';
+      final views = <int, int>{};
+      final contacts = <int, int>{};
+      final favorites = <int, int>{};
+      final now = DateTime.now();
+      final from = now.subtract(const Duration(days: 30));
+      String day(DateTime value) =>
+          '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+      for (var offset = 0; offset < itemIds.length; offset += 100) {
+        final batch = itemIds.skip(offset).take(100).toList();
+        final response = await http
+            .post(
+              Uri.parse('https://api.avito.ru/stats/v1/accounts/$userId/items'),
+              headers: {
+                'authorization': 'Bearer $token',
+                'content-type': 'application/json',
+              },
+              body: jsonEncode({
+                'itemIds': batch,
+                'dateFrom': day(from),
+                'dateTo': day(now),
+                'fields': ['uniqViews', 'uniqContacts', 'uniqFavorites'],
+                'periodGrouping': 'day',
+              }),
+            )
+            .timeout(const Duration(seconds: 60));
+        if (response.statusCode != 200) {
+          throw StateError(
+            'Ошибка статистики ${response.statusCode}: ${response.body}',
+          );
+        }
+        final body = jsonDecode(response.body) as Map;
+        final result = body['result'] is Map
+            ? Map<String, dynamic>.from(body['result'] as Map)
+            : <String, dynamic>{};
+        for (final item
+            in (result['items'] as List? ?? const []).whereType<Map>()) {
+          final itemId = int.tryParse('${item['itemId'] ?? ''}');
+          if (itemId == null) continue;
+          for (final stat
+              in (item['stats'] as List? ?? const []).whereType<Map>()) {
+            views[itemId] =
+                (views[itemId] ?? 0) +
+                ((stat['uniqViews'] as num?)?.toInt() ?? 0);
+            contacts[itemId] =
+                (contacts[itemId] ?? 0) +
+                ((stat['uniqContacts'] as num?)?.toInt() ?? 0);
+            favorites[itemId] =
+                (favorites[itemId] ?? 0) +
+                ((stat['uniqFavorites'] as num?)?.toInt() ?? 0);
+          }
+        }
+      }
+      final statsNow = DateTime.now().millisecondsSinceEpoch;
+      var updated = 0;
+      var priceChanges = 0;
+      for (final product in products) {
+        final itemId = int.tryParse(product.avitoItemId);
+        if (itemId == null) continue;
+        product
+          ..avitoViews = views[itemId] ?? 0
+          ..avitoContacts = contacts[itemId] ?? 0
+          ..avitoFavorites = favorites[itemId] ?? 0
+          ..avitoStatsAt = statsNow;
+        final price = prices[itemId];
+        if (price != null && price > 0) {
+          if ((product.marketplacePrice - price).abs() > 0.01) {
+            priceChanges++;
+          }
+          product
+            ..marketplacePrice = price
+            ..myPriceOverride = price;
+        }
+        updated++;
+      }
+      await _saveCrmData();
+      _enqueueCloudSnapshot('Товар на продажу', 'Статистика Авито');
+      if (progressContext != null && progressContext!.mounted) {
+        Navigator.of(progressContext!).pop();
+      }
+      if (!mounted) return;
+      final top = products.where((item) => item.avitoViews > 0).toList()
+        ..sort((a, b) => b.avitoViews.compareTo(a.avitoViews));
+      final totalViews = views.values.fold<int>(0, (a, b) => a + b);
+      final totalContacts = contacts.values.fold<int>(0, (a, b) => a + b);
+      final totalFavorites = favorites.values.fold<int>(0, (a, b) => a + b);
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Статистика Авито'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Объявлений: $updated'),
+                Text('Просмотры за 30 дней: $totalViews'),
+                Text('Контакты: $totalContacts'),
+                Text('В избранное: $totalFavorites'),
+                Text('Цены обновлены: $priceChanges'),
+                if (top.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Топ по просмотрам:',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  for (final item in top.take(5))
+                    Text(
+                      '${item.name.isEmpty ? item.sku : item.name} — ${item.avitoViews}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Закрыть'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (progressContext != null && progressContext!.mounted) {
+        Navigator.of(progressContext!).pop();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Ошибка статистики: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Диалог «Параметры категорий Авито»: показывает состояние справочника и
+  /// позволяет обновить его с VPS. Открывается из меню «Авито» на странице
+  /// товаров, чтобы не искать кнопку внутри настроек.
+  Future<void> _showAvitoCatalogDialog() async {
+    var busy = false;
+    String progressText = '';
+    double? progressValue;
+    Timer? poll;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final catalog = avitoCatalogData;
+          final updatedAt = prefs.getInt('crm_avito_catalog_at') ?? 0;
+          return AlertDialog(
+            title: const Text('Параметры категорий Авито'),
+            content: SizedBox(
+              width: 580,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'CRM показывает поля, которые нужно заполнить для '
+                    'публикации товара в выбранной категории Авито, и передаёт '
+                    'их в фид автозагрузки как <Params>.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    catalog == null
+                        ? 'Справочник ещё не загружен.'
+                        : 'Загружено категорий: ${catalog.categories.length}, '
+                              'наборов полей: ${catalog.fields.length}'
+                              '${updatedAt > 0 ? '\nОбновлён: ${DateTime.fromMillisecondsSinceEpoch(updatedAt)}' : ''}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (_session == null) ...[
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Нужен вход на общий CRM-сервер и права владельца.',
+                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: preloadingTree || _session == null
+                            ? null
+                            : _preloadAvitoTree,
+                        icon: const Icon(
+                          Icons.download_for_offline_outlined,
+                          size: 18,
+                        ),
+                        label: const Text('Скачать дерево в кэш'),
+                      ),
+                      const SizedBox(width: 10),
+                      if (preloadingTree)
+                        Expanded(
+                          child: Text(
+                            'Скачано $preloadDone из $preloadTotal узлов',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                    ],
+                  ),
+                  if (busy) ...[
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(value: progressValue),
+                    const SizedBox(height: 8),
+                    Text(progressText, style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Окно можно не закрывать: ход загрузки обновляется '
+                      'автоматически.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Закрыть'),
+              ),
+              if (avitoCatalogErrors > 0 && !busy && _session != null)
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final service = _authService;
+                    final session = _session;
+                    setDialogState(() {
+                      busy = true;
+                      progressValue = null;
+                      progressText = 'Повторяю незагруженные категории…';
+                    });
+                    poll?.cancel();
+                    poll = Timer.periodic(const Duration(milliseconds: 1200), (
+                      _,
+                    ) async {
+                      if (service == null || session == null) return;
+                      try {
+                        final p = await service.avitoCatalogProgress(
+                          session.token,
+                        );
+                        if (!dialogContext.mounted) return;
+                        final stage = '${p['stage'] ?? ''}';
+                        final total = (p['total'] as num?)?.toInt() ?? 0;
+                        final done = (p['done'] as num?)?.toInt() ?? 0;
+                        final errors = (p['errors'] as num?)?.toInt() ?? 0;
+                        setDialogState(() {
+                          progressValue = total > 0 ? done / total : null;
+                          progressText = switch (stage) {
+                            'fields' =>
+                              'Повтор: $done из $total · ошибок $errors',
+                            'saving' => 'Сохраняю…',
+                            'done' => 'Готово',
+                            _ => progressText,
+                          };
+                        });
+                      } catch (_) {}
+                    });
+                    await _syncAvitoCatalogFromVps(onlyFailed: true);
+                    poll?.cancel();
+                    poll = null;
+                    if (!dialogContext.mounted) return;
+                    setDialogState(() {
+                      busy = false;
+                      progressValue = null;
+                      progressText = '';
+                    });
+                  },
+                  icon: const Icon(Icons.replay, size: 18),
+                  label: Text('Повторить ошибки ($avitoCatalogErrors)'),
+                ),
+              FilledButton.icon(
+                onPressed: busy || _session == null
+                    ? null
+                    : () async {
+                        final service = _authService;
+                        final session = _session;
+                        setDialogState(() {
+                          busy = true;
+                          progressValue = null;
+                          progressText = 'Запускаю загрузку…';
+                        });
+                        poll?.cancel();
+                        poll = Timer.periodic(const Duration(milliseconds: 1200), (
+                          _,
+                        ) async {
+                          if (service == null || session == null) return;
+                          try {
+                            final p = await service.avitoCatalogProgress(
+                              session.token,
+                            );
+                            if (!dialogContext.mounted) return;
+                            final stage = '${p['stage'] ?? ''}';
+                            final total = (p['total'] as num?)?.toInt() ?? 0;
+                            final done = (p['done'] as num?)?.toInt() ?? 0;
+                            final errors = (p['errors'] as num?)?.toInt() ?? 0;
+                            final current = '${p['current'] ?? ''}';
+                            final startedAt =
+                                (p['startedAt'] as num?)?.toInt() ?? 0;
+                            var eta = '';
+                            if (done > 0 && total > done && startedAt > 0) {
+                              final elapsed =
+                                  DateTime.now().millisecondsSinceEpoch -
+                                  startedAt;
+                              final left =
+                                  ((total - done) * (elapsed / done) / 1000)
+                                      .round();
+                              eta = ' · осталось ~$left с';
+                            }
+                            setDialogState(() {
+                              progressValue = total > 0 ? done / total : null;
+                              progressText = switch (stage) {
+                                'token' => 'Получаю токен Авито…',
+                                'tree' => 'Читаю дерево категорий…',
+                                'fields' =>
+                                  'Обработано $done из $total'
+                                      '${current.isNotEmpty ? ' · $current' : ''}'
+                                      '$eta'
+                                      '${errors > 0 ? ' · ошибок $errors' : ''}',
+                                'saving' => 'Сохраняю справочник…',
+                                'done' => 'Готово',
+                                'error' => 'Ошибка: ${p['message'] ?? ''}',
+                                _ => progressText,
+                              };
+                            });
+                          } catch (_) {
+                            // Сетевые сбои опроса не мешают самой загрузке.
+                          }
+                        });
+                        await _syncAvitoCatalogFromVps();
+                        poll?.cancel();
+                        poll = null;
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          busy = false;
+                          progressValue = null;
+                          progressText = '';
+                        });
+                      },
+                icon: const Icon(Icons.cloud_download_outlined, size: 18),
+                label: const Text('Обновить каталог'),
+              ),
+            ],
+          );
+        },
+      ),
+    ).whenComplete(() {
+      poll?.cancel();
+      poll = null;
+    });
+  }
+
+  Future<void> _showAvitoSettings() async {
+    final clientId = await secretStore.read('avito_client_id') ?? '';
+    final clientSecret = await secretStore.read('avito_client_secret') ?? '';
+    final idController = TextEditingController(text: clientId);
+    final secretController = TextEditingController(text: clientSecret);
+    var status = '';
+    var testing = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Настройки Авито'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Ключи API из личного кабинета разработчика Авито: '
+                  '«Мои приложения» → Client ID и Client Secret.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Для заказов нужна «Авито Доставка для бизнеса»: '
+                  'реквизиты компании и подключённый тариф.',
+                  style: TextStyle(fontSize: 12, color: Colors.orange),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: idController,
+                  decoration: const InputDecoration(labelText: 'Client ID'),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: secretController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Client Secret'),
+                ),
+                const SizedBox(height: 16),
+                if (status.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(status, style: const TextStyle(fontSize: 12)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Закрыть'),
+            ),
+            TextButton(
+              onPressed: testing
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        testing = true;
+                        status = 'Проверяю подключение…';
+                      });
+                      try {
+                        final response = await http
+                            .post(
+                              Uri.parse('https://api.avito.ru/token'),
+                              headers: const {
+                                'content-type':
+                                    'application/x-www-form-urlencoded',
+                              },
+                              body: {
+                                'grant_type': 'client_credentials',
+                                'client_id': idController.text.trim(),
+                                'client_secret': secretController.text.trim(),
+                              },
+                            )
+                            .timeout(const Duration(seconds: 20));
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          testing = false;
+                          status = response.statusCode == 200
+                              ? 'Подключение работает, токен получен.'
+                              : 'Ошибка ${response.statusCode}: ${response.body}';
+                        });
+                      } catch (error) {
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          testing = false;
+                          status = 'Ошибка: $error';
+                        });
+                      }
+                    },
+              child: const Text('Проверить'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                await secretStore.write(
+                  'avito_client_id',
+                  idController.text.trim(),
+                );
+                await secretStore.write(
+                  'avito_client_secret',
+                  secretController.text.trim(),
+                );
+                if (!dialogContext.mounted) return;
+                setDialogState(() => status = 'Ключи сохранены.');
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    idController.dispose();
+    secretController.dispose();
+  }
+
+  String _avitoIdFromUrl(String url) {
+    if (!url.contains('avito.ru')) return '';
+    final match = RegExp(r'(\d{6,})(?:[?#].*)?$').firstMatch(url.trim());
+    return match?.group(1) ?? '';
+  }
+
+  void _fillAvitoItemIds() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var changed = false;
+    for (final product in products) {
+      if (product.avitoItemId.isNotEmpty) continue;
+      if (product.marketplaceUrl.isEmpty) continue;
+      final id = _avitoIdFromUrl(product.marketplaceUrl);
+      if (id.isEmpty) continue;
+      product
+        ..avitoItemId = id
+        ..marketplace = product.marketplace.isEmpty
+            ? 'avito'
+            : product.marketplace
+        ..updatedAt = now;
+      changed = true;
+    }
+    if (changed) {
+      localChangeQueue.enqueue(
+        entity: 'Товар на продажу',
+        details: 'Привязка объявлений Авито по ID',
+        payload: _syncPayload('Товар на продажу'),
+      );
+      unawaited(
+        prefs.setString(
+          'crm_products',
+          jsonEncode(products.map((p) => p.toJson()).toList()),
+        ),
+      );
+    }
+  }
+
+  Future<void> _syncWithAvito() async {
+    if (!Platform.isMacOS) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Синхронизация с Авито доступна на macOS'),
+          ),
+        );
+      }
+      return;
+    }
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Войдите в CRM, чтобы синхронизировать Авито'),
+          ),
+        );
+      }
+      return;
+    }
+    BuildContext? progressContext;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          progressContext = ctx;
+          return const AlertDialog(
+            title: Text('Синхронизация с Авито'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 14),
+                Text(
+                  'Собираю объявления и обновляю товары.\n'
+                  'Это может занять несколько минут.',
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final script = File('${Directory.systemTemp.path}/crm_avito_sync.py');
+      await script.writeAsString(avitoSyncScript);
+      final result = await Process.run('/usr/bin/python3', [
+        script.path,
+      ]).timeout(const Duration(minutes: 20));
+      if (result.exitCode != 0) {
+        throw StateError(CrmLogger.redact(result.stderr.toString().trim()));
+      }
+      final decoded = jsonDecode(result.stdout.toString());
+      if (decoded is! List) throw StateError('Авито вернул неожиданный ответ');
+      var matched = 0;
+      var photos = 0;
+      final missing = <String>[];
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final raw in decoded.whereType<Map>()) {
+        final item = Map<String, dynamic>.from(raw);
+        final article = normalizeSku((item['article'] ?? '').toString());
+        final url = (item['url'] ?? '').toString();
+        if (article.isEmpty || url.isEmpty) continue;
+        Product? target;
+        for (final product in products) {
+          if (product.sku == article) {
+            target = product;
+            break;
+          }
+        }
+        if (target == null) {
+          missing.add(article);
+          continue;
+        }
+        target
+          ..marketplace = 'avito'
+          ..marketplaceUrl = url
+          ..avitoItemId = _avitoIdFromUrl(url)
+          ..marketplacePrice =
+              _excelNumber((item['price'] ?? '').toString()) ?? 0
+          ..myPriceOverride = null
+          ..updatedAt = now;
+        matched++;
+        if (target.photos.isEmpty) {
+          final images = (item['imgs'] as List? ?? const [])
+              .whereType<String>()
+              .take(3);
+          final uploaded = <String>[];
+          for (final image in images) {
+            try {
+              final response = await http
+                  .get(
+                    Uri.parse(image),
+                    headers: const {'user-agent': 'Mozilla/5.0'},
+                  )
+                  .timeout(const Duration(seconds: 15));
+              if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+                uploaded.add(
+                  await service.uploadPhoto(session.token, response.bodyBytes),
+                );
+              }
+            } catch (_) {}
+          }
+          if (uploaded.isNotEmpty) {
+            target.photos = uploaded;
+            photos++;
+          }
+        }
+      }
+      setState(() {});
+      await _saveCrmData();
+      _enqueueCloudSnapshot('Товар на продажу', 'Синхронизация с Авито');
+      if (progressContext != null && progressContext!.mounted) {
+        Navigator.of(progressContext!).pop();
+      }
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Синхронизация завершена'),
+          content: Text(
+            'Объявлений: ${decoded.length}\n'
+            'Сопоставлено товаров: $matched\n'
+            'Загружено фото: $photos\n'
+            'Не найдено по артикулу: ${missing.length}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Закрыть'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (progressContext != null && progressContext!.mounted) {
+        Navigator.of(progressContext!).pop();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Ошибка синхронизации: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportProductsExcel() async {
+    if (!_canEdit('stock')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Нет прав на экспорт товаров')),
+        );
+      }
+      return;
+    }
+    try {
+      final bytes = buildProductsExcel(products, deliveries);
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File(
+        '${dir.path}/crm-products-${DateTime.now().millisecondsSinceEpoch}.xlsx',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Экспортировано: ${file.path}')));
+      }
+    } catch (error) {
+      CrmLogger.error(
+        'Ошибка экспорта Excel',
+        error: error,
+        name: 'crm.products',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Ошибка экспорта: $error')));
+      }
+    }
+  }
+
+  Future<void> _importAvitoExcel() async {
+    if (!_canEdit('stock')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Нет прав на импорт товаров')),
+        );
+      }
+      return;
+    }
+    const group = XTypeGroup(label: 'Excel Авито', extensions: ['xlsx']);
+    final file = await openFile(acceptedTypeGroups: const [group]);
+    if (file == null) return;
+    List<AvitoExportRow> rows;
+    try {
+      rows = parseAvitoExport(await file.readAsBytes());
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось прочитать файл: $error')),
+        );
+      }
+      return;
+    }
+    if (rows.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('В файле не найдена выгрузка объявлений Авито'),
+          ),
+        );
+      }
+      return;
+    }
+    final service = _authService;
+    final session = _session;
+    final totalPhotos = service != null && session != null
+        ? rows.fold<int>(0, (sum, row) => sum + row.photos.take(10).length)
+        : 0;
+    final totalWork = rows.length + totalPhotos;
+    var doneWork = 0;
+    var cancelled = false;
+    final progress = ValueNotifier<double>(0);
+    final status = ValueNotifier<String>('Сопоставляю объявления…');
+    BuildContext? progressContext;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          progressContext = ctx;
+          return AlertDialog(
+            title: const Text('Импорт Авито'),
+            content: SizedBox(
+              width: 420,
+              child: AnimatedBuilder(
+                animation: Listenable.merge([progress, status]),
+                builder: (_, _) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LinearProgressIndicator(value: progress.value),
+                    const SizedBox(height: 10),
+                    Text(
+                      '${(progress.value * 100).round()}%',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(status.value, style: const TextStyle(fontSize: 12)),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  status.value = 'Останавливаю…';
+                },
+                child: const Text('Остановить'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    void tick(String text) {
+      if (totalWork <= 0) return;
+      doneWork++;
+      progress.value = (doneWork / totalWork).clamp(0.0, 1.0);
+      status.value = text;
+    }
+
+    var matched = 0;
+    var descriptions = 0;
+    var photos = 0;
+    var prices = 0;
+    final unmatched = <String>[];
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (var index = 0; index < rows.length; index++) {
+      if (cancelled) break;
+      final row = rows[index];
+      Product? product;
+      for (final item in products) {
+        if (item.avitoItemId == row.avitoId) {
+          product = item;
+          break;
+        }
+      }
+      if (product == null) {
+        final sku = normalizeSku(row.article);
+        if (sku.isNotEmpty) {
+          for (final item in products) {
+            if (item.sku == sku) {
+              product = item;
+              break;
+            }
+          }
+        }
+      }
+      if (product == null) {
+        unmatched.add(row.article.isEmpty ? row.avitoId : row.article);
+        tick('Объявление ${index + 1} из ${rows.length}');
+        continue;
+      }
+      product
+        ..avitoItemId = row.avitoId
+        ..marketplace = 'avito'
+        ..updatedAt = now;
+      if (row.description.isNotEmpty) {
+        product.description = row.description;
+        descriptions++;
+      }
+      if (row.title.isNotEmpty && product.name.trim().isEmpty) {
+        product.name = row.title;
+      }
+      final price = _excelNumber(row.price);
+      if (price != null && price > 0) {
+        product
+          ..marketplacePrice = price
+          ..myPriceOverride = price;
+        prices++;
+      }
+      if (row.category.isNotEmpty) product.category = row.category;
+      if (row.attributes.isNotEmpty) {
+        product.attributes = row.attributes;
+        final size = row.attributes['Размер'];
+        if (size != null && size.trim().isNotEmpty) {
+          product.size = size.trim();
+        }
+      }
+      if (row.photos.isNotEmpty && service != null && session != null) {
+        final uploaded = <String>[];
+        for (final photo in row.photos.take(10)) {
+          if (cancelled) break;
+          try {
+            final response = await http
+                .get(
+                  Uri.parse(photo),
+                  headers: const {'user-agent': 'Mozilla/5.0'},
+                )
+                .timeout(const Duration(seconds: 20));
+            if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+              uploaded.add(
+                await service.uploadPhoto(session.token, response.bodyBytes),
+              );
+            }
+          } catch (_) {}
+          tick('Фото объявления ${index + 1}');
+        }
+        if (uploaded.isNotEmpty) {
+          product.photos = uploaded;
+          photos += uploaded.length;
+        }
+      }
+      matched++;
+      tick('Объявление ${index + 1} из ${rows.length}');
+    }
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Импорт выгрузки Авито');
+    if (progressContext != null && progressContext!.mounted) {
+      Navigator.of(progressContext!).pop();
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Импорт Авито завершён'),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Объявлений в файле: ${rows.length}'),
+              if (cancelled)
+                const Text(
+                  'Импорт остановлен',
+                  style: TextStyle(color: Colors.orange),
+                ),
+              Text('Сопоставлено с товарами: $matched'),
+              Text('Описаний сохранено: $descriptions'),
+              Text('Цен обновлено: $prices'),
+              Text('Фото добавлено товарам: $photos'),
+              if (unmatched.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text('Не найдено товаров: ${unmatched.length}'),
+                const SizedBox(height: 4),
+                Text(
+                  unmatched.take(10).join(', '),
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _importProductsExcel() async {
+    try {
+      await _runProductsImport();
+    } catch (error) {
+      CrmLogger.error(
+        'Ошибка импорта Excel',
+        error: error,
+        name: 'crm.products',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Ошибка импорта: ${CrmLogger.redact(error.toString())}',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  double? _excelNumber(String value) {
+    var text = value.trim();
+    if (text.isEmpty) return null;
+    text = text.replaceAll(RegExp(r'[\s\u00a0\u202f]'), '');
+    text = text.replaceAll(
+      RegExp(r'(₽|руб\.?|р\.|шт\.?|%|RUB)', caseSensitive: false),
+      '',
+    );
+    text = text.replaceAll(RegExp(r'[^0-9,.\-]'), '');
+    if (text.isEmpty || text == '-' || text == '.' || text == ',') return null;
+    if (text.contains(',') && text.contains('.')) {
+      if (text.lastIndexOf(',') > text.lastIndexOf('.')) {
+        text = text.replaceAll('.', '').replaceAll(',', '.');
+      } else {
+        text = text.replaceAll(',', '');
+      }
+    } else if (text.contains(',')) {
+      text = text.replaceAll(',', '.');
+    }
+    return double.tryParse(text);
+  }
+
+  Future<void> _runProductsImport() async {
+    if (!_canEdit('stock')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Нет прав на импорт товаров')),
+        );
+      }
+      return;
+    }
+    const group = XTypeGroup(label: 'Excel', extensions: ['xlsx']);
+    final file = await openFile(acceptedTypeGroups: const [group]);
+    if (file == null) return;
+    final rows = parseProductsExcel(await file.readAsBytes());
+    if (rows.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('В файле нет товаров')));
+      }
+      return;
+    }
+    double number(String? value) => _excelNumber(value ?? '') ?? 0;
+    bool validNumber(String value) {
+      final text = value.trim().toLowerCase();
+      if (text.isEmpty ||
+          text == '-' ||
+          text == '—' ||
+          text == '–' ||
+          text == 'нет' ||
+          text == 'н/д' ||
+          text == 'nd') {
+        return true;
+      }
+      final parsed = _excelNumber(value);
+      return parsed != null && parsed >= 0;
+    }
+
+    final invalid = <int>{};
+    final errors = <String>[];
+    for (var index = 0; index < rows.length; index++) {
+      final row = rows[index];
+      final line = index + 2;
+      final name = (row['Название'] ?? '').trim();
+      if (name.isEmpty) {
+        errors.add('Строка $line: не указано название');
+        invalid.add(index);
+        continue;
+      }
+      if (!validNumber(row['Количество'] ?? '') ||
+          !validNumber(row['Себестоимость'] ?? '') ||
+          !validNumber(row['Цена маркетплейса'] ?? '') ||
+          !validNumber(row['Цена продажи'] ?? '')) {
+        errors.add('Строка $line: некорректное число');
+        invalid.add(index);
+        continue;
+      }
+      final id = (row['ID'] ?? '').trim();
+      final sku = normalizeSku((row['Артикул'] ?? '').trim());
+      final knownId = id.isNotEmpty && products.any((p) => p.id == id);
+      if (!knownId && sku.isNotEmpty) {
+        final matches = products.where((p) => p.sku == sku).length;
+        if (matches > 1) {
+          errors.add(
+            'Строка $line: артикул «$sku» встречается несколько раз — укажите ID',
+          );
+          invalid.add(index);
+        }
+      }
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Импорт товаров'),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Строк в файле: ${rows.length}'),
+                Text('Будет импортировано: ${rows.length - invalid.length}'),
+                if (selectedDeliveryId.isNotEmpty)
+                  const Text(
+                    'Товары без номера поставки попадут в выбранную поставку',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                if (errors.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Ошибок: ${errors.length}',
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                  for (final error in errors.take(10))
+                    Text(error, style: const TextStyle(fontSize: 12)),
+                  if (errors.length > 10) const Text('…'),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: rows.length == invalid.length
+                ? null
+                : () => Navigator.pop(dialogContext, true),
+            child: const Text('Импортировать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    var added = 0;
+    var updated = 0;
+    final createdDeliveries = <Delivery>[];
+    for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      if (invalid.contains(rowIndex)) continue;
+      final row = rows[rowIndex];
+      final sku = normalizeSku((row['Артикул'] ?? '').trim());
+      final name = (row['Название'] ?? '').trim();
+      Product? target;
+      final importedId = (row['ID'] ?? '').trim();
+      if (importedId.isNotEmpty) {
+        for (final p in products) {
+          if (p.id == importedId) {
+            target = p;
+            break;
+          }
+        }
+      }
+      if (target == null && sku.isNotEmpty) {
+        for (final p in products) {
+          if (p.sku == sku) {
+            target = p;
+            break;
+          }
+        }
+      }
+      if (target == null && sku.isEmpty) {
+        for (final p in products) {
+          if (p.sku.isEmpty && p.name == name) {
+            target = p;
+            break;
+          }
+        }
+      }
+      final isNew = target == null;
+      final p =
+          target ??
+          Product(
+            id: 'product-${DateTime.now().microsecondsSinceEpoch}',
+            name: name,
+            updatedAt: DateTime.now().millisecondsSinceEpoch,
+          );
+      p.name = name;
+      p.sku = sku;
+      p.category = (row['Категория'] ?? '').trim().isEmpty
+          ? 'Без категории'
+          : row['Категория']!.trim();
+      p.size = (row['Размер'] ?? '').trim();
+      p.quantity = number(row['Количество']);
+      final cost = (row['Себестоимость'] ?? '').trim();
+      p.costPrice = cost.isEmpty ? null : number(cost);
+      p.marketplacePrice = number(row['Цена маркетплейса']);
+      p.marketplaceUrl = (row['Ссылка'] ?? '').trim();
+      final market = (row['Маркетплейс'] ?? '').trim().toLowerCase();
+      p.marketplace = market.contains('ozon')
+          ? 'ozon'
+          : market.contains('wb') || market.contains('wildberries')
+          ? 'wb'
+          : '';
+      final discount = (row['Скидка %'] ?? '').trim();
+      p.discountPercent = discount.isEmpty ? 30 : number(discount);
+      final myPrice = (row['Моя цена'] ?? '').trim();
+      p.myPriceOverride = myPrice.isEmpty ? null : number(myPrice);
+      p.status = productStatusValue(row['Статус'] ?? '');
+      p.sold = p.status == 'sold';
+      p.salePrice = number(row['Цена продажи']);
+      final deliveryNumber = (row['Поставка №'] ?? '').trim().replaceAll(
+        RegExp(r'\D'),
+        '',
+      );
+      p.deliveryId = '';
+      if (deliveryNumber.isNotEmpty) {
+        for (final d in deliveries) {
+          if ('${d.number}' == deliveryNumber) {
+            p.deliveryId = d.id;
+            break;
+          }
+        }
+        if (p.deliveryId.isEmpty) {
+          final numberValue = int.tryParse(deliveryNumber);
+          if (numberValue != null) {
+            final created = Delivery(
+              id: 'delivery-${DateTime.now().microsecondsSinceEpoch}',
+              number: numberValue,
+              name: (row['Поставка'] ?? '').trim().isEmpty
+                  ? 'Поставка $numberValue'
+                  : row['Поставка']!.trim(),
+              totalCost: number(row['Стоимость поставки']),
+              trackItemCost: true,
+              updatedAt: DateTime.now().millisecondsSinceEpoch,
+            );
+            deliveries.add(created);
+            createdDeliveries.add(created);
+            p.deliveryId = created.id;
+          }
+        }
+      }
+      if (p.deliveryId.isEmpty &&
+          deliveryNumber.isEmpty &&
+          selectedDeliveryId.isNotEmpty) {
+        p.deliveryId = selectedDeliveryId;
+      }
+      p.photos = (row['Фото'] ?? '')
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .take(10)
+          .toList();
+      p.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      if (isNew) {
+        products.add(p);
+        added++;
+      } else {
+        updated++;
+      }
+    }
+    _normalizeProductSkus();
+    _mergeDuplicateDeliveries(persist: false);
+    if (createdDeliveries.isNotEmpty) {
+      selectedDeliveryId = createdDeliveries.first.id;
+    }
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Импорт товаров');
+    if (createdDeliveries.isNotEmpty) {
+      _enqueueCloudSnapshot('Поставка', 'Импорт поставок');
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Импорт: добавлено $added, обновлено $updated')),
+      );
+    }
+  }
+
+  Future<void> _changeProductStatus(Product item, String status) async {
+    if (!_canEdit('stock') || item.status == status) return;
+    var moveQty = item.quantity <= 0 ? 1.0 : item.quantity;
+    if (item.quantity > 1) {
+      final controller = TextEditingController(text: '1');
+      final value = await showDialog<double?>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Сколько единиц?'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Количество',
+              helperText: 'Остальные останутся в прежнем статусе',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, item.quantity),
+              child: const Text('Все'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                double.tryParse(controller.text.trim().replaceAll(',', '.')) ??
+                    0,
+              ),
+              child: const Text('Перенести'),
+            ),
+          ],
+        ),
+      );
+      if (value == null || !mounted) return;
+      moveQty = value.clamp(1, item.quantity);
+    }
+    var sale = item.salePrice;
+    if (status == 'sold') {
+      final price = TextEditingController(
+        text: (item.salePrice > 0 ? item.salePrice : item.myPrice)
+            .toStringAsFixed(0),
+      );
+      final result = await showDialog<double?>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Цена продажи за единицу'),
+          content: TextField(
+            controller: price,
+            keyboardType: TextInputType.number,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'Сумма за 1 шт, ₽',
+              helperText: 'Количество: ${_orderQuantity(moveQty)} шт',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0,
+              ),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      );
+      if (result == null || !mounted) return;
+      sale = result;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (moveQty >= item.quantity) {
+      item.recordStatusEvent(status, item.quantity);
+      item
+        ..status = status
+        ..sold = status == 'sold'
+        ..soldAt = status == 'sold' ? now : 0
+        ..salePrice = status == 'sold' ? sale : item.salePrice
+        ..updatedAt = now;
+    } else {
+      final part = Product(
+        id: 'product-${DateTime.now().microsecondsSinceEpoch}',
+        name: item.name,
+        sku: item.sku,
+        category: item.category,
+        size: item.size,
+        description: item.description,
+        attributes: Map<String, String>.from(item.attributes),
+        price: item.price,
+        purchasePrice: item.purchasePrice,
+        quantity: moveQty,
+        minQuantity: item.minQuantity,
+        supplier: item.supplier,
+        photo: item.photo,
+        deliveryId: item.deliveryId,
+        photos: List<String>.from(item.photos),
+        costPrice: item.costPrice,
+        marketplacePrice: item.marketplacePrice,
+        marketplaceUrl: item.marketplaceUrl,
+        marketplace: item.marketplace,
+        avitoItemId: item.avitoItemId,
+        discountPercent: item.discountPercent,
+        salePercent: item.salePercent,
+        saleBasePrice: item.saleBasePrice,
+        myPriceOverride: item.myPriceOverride,
+        sold: status == 'sold',
+        soldAt: status == 'sold' ? now : 0,
+        status: status,
+        salePrice: status == 'sold' ? sale : 0,
+        updatedAt: now,
+      );
+      part.recordStatusEvent(status, moveQty);
+      item
+        ..quantity = item.quantity - moveQty
+        ..updatedAt = now;
+      products.add(part);
+    }
+    setState(() {});
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Товар ${item.id}');
+  }
+
+  Future<void> _deleteProduct(Product item) async {
+    if (!_canEdit('stock')) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить товар?'),
+        content: Text(item.name),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    products.removeWhere((value) => value.id == item.id);
+    deletedProductIds.add(item.id);
+    await _saveCrmData();
+    _enqueueCloudSnapshot('Товар на продажу', 'Товар ${item.id}');
+  }
+
   Widget _stock() => StockPage(
     items: stockItems,
     movementCount: (item) =>
@@ -12370,6 +16451,7 @@ $instructions
       }
       final rowsFromSheet = await _sheets.readSheet(
         _dataSource('deals', SheetsSchema.dealsSheet),
+        area: 'deals',
         cancellation: cancellation,
       );
       if (requestId != _dealsRequestId) return;
@@ -13733,6 +17815,7 @@ $instructions
       }
       accountingRows = await _sheets.readSheet(
         _dataSource('accounting', SheetsSchema.accountingSheet),
+        area: 'finance',
         cancellation: cancellation,
       );
       if (requestId != _accountingRequestId) return;
@@ -13752,8 +17835,11 @@ $instructions
       try {
         final expRows = await _sheets.readSheet(
           _dataSource('expenses', SheetsSchema.expensesSheet),
+          area: 'finance',
           cancellation: cancellation,
         );
+        expenseSheetRows = expRows;
+        await prefs.setString('cached_expenses', jsonEncode(expenseSheetRows));
         businessTransactions.addAll(
           importSheetExpenses(expRows, existing: businessTransactions),
         );
@@ -13777,6 +17863,17 @@ $instructions
           accountingPage = 0;
         }
       } catch (_) {}
+      if (expenseSheetRows.isEmpty) {
+        try {
+          final cachedExpenses = prefs.getString('cached_expenses');
+          if (cachedExpenses != null) {
+            expenseSheetRows = (jsonDecode(cachedExpenses) as List)
+                .whereType<List>()
+                .map((r) => r.map((x) => x.toString()).toList())
+                .toList();
+          }
+        } catch (_) {}
+      }
       sheetError = currentSheetId.isEmpty && !_hasProtectedSheetAccess
           ? 'Укажите ID или ссылку Google Sheets в настройках.'
           : accountingRows.isEmpty

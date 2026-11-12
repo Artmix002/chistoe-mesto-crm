@@ -33,10 +33,16 @@ class RequestCancelledException implements Exception {
 /// и после получения заголовков ответа.
 class ApiClient {
   const ApiClient({
-    this.timeout = const Duration(seconds: 20),
+    this.timeout = const Duration(seconds: 10),
     this.clientFactory,
     this.defaultCancellation,
   });
+
+  /// Один общий HTTP-клиент на всё приложение: соединение (TCP+TLS)
+  /// переиспользуется. На медленной/нестабильной сети это убирает
+  /// многократные «зависания» на рукопожатии.
+  static http.Client? _shared;
+  static http.Client get _sharedClient => _shared ??= http.Client();
 
   final Duration timeout;
   final HttpClientFactory? clientFactory;
@@ -174,7 +180,8 @@ class ApiClient {
       throw ArgumentError.value(body, 'body', 'Неподдерживаемое тело запроса');
     }
 
-    final client = clientFactory?.call() ?? http.Client();
+    final provided = clientFactory?.call();
+    final client = provided ?? _sharedClient;
     try {
       final response = await client
           .send(request)
@@ -193,7 +200,8 @@ class ApiClient {
       }
       return response;
     } finally {
-      client.close();
+      // Свой клиент закрываем, общий — оставляем живым для следующих запросов.
+      if (provided != null) provided.close();
     }
   }
 

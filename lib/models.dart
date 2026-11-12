@@ -149,6 +149,285 @@ class StockItem {
   );
 }
 
+class Product {
+  Product({
+    required this.id,
+    required this.name,
+    this.sku = '',
+    this.category = 'Без категории',
+    this.size = '',
+    this.description = '',
+    this.attributes = const {},
+    this.price = 0,
+    this.purchasePrice = 0,
+    this.quantity = 0,
+    this.minQuantity = 0,
+    this.supplier = '',
+    this.photo = '',
+    this.deliveryId = '',
+    this.photos = const [],
+    this.costPrice,
+    this.marketplacePrice = 0,
+    this.marketplaceUrl = '',
+    this.marketplace = '',
+    this.avitoItemId = '',
+    this.avitoViews = 0,
+    this.avitoContacts = 0,
+    this.avitoFavorites = 0,
+    this.avitoStatsAt = 0,
+    this.discountPercent = 30,
+    this.salePercent = 0,
+    this.saleBasePrice = 0,
+    this.myPriceOverride,
+    this.sold = false,
+    this.soldAt = 0,
+    this.status = 'in_stock',
+    this.salePrice = 0,
+    this.statusEvents = const [],
+    this.updatedAt = 0,
+  });
+
+  double get myPrice =>
+      myPriceOverride ??
+      marketplacePrice * (1 - discountPercent.clamp(0, 100) / 100);
+
+  double get amount => myPrice * quantity;
+  final String id;
+  String name;
+  String sku;
+  String category;
+  String size;
+  String description;
+  Map<String, String> attributes;
+  double price;
+  double purchasePrice;
+  double quantity;
+  double minQuantity;
+  String supplier;
+  String photo;
+  String deliveryId;
+  List<String> photos;
+  double? costPrice;
+  double marketplacePrice;
+  String marketplaceUrl;
+  String marketplace;
+  String avitoItemId;
+  int avitoViews;
+  int avitoContacts;
+  int avitoFavorites;
+  int avitoStatsAt;
+  double discountPercent;
+  double salePercent;
+  double saleBasePrice;
+  double? myPriceOverride;
+  bool sold;
+  int soldAt;
+  String status;
+  double salePrice;
+  List<ProductStatusEvent> statusEvents;
+  int updatedAt;
+
+  int get soldTimestamp {
+    if (soldAt > 0) return soldAt;
+    for (final event in statusEvents.reversed) {
+      if (event.status == 'sold') {
+        return DateTime.tryParse(event.at)?.millisecondsSinceEpoch ?? 0;
+      }
+    }
+    return 0;
+  }
+
+  bool get onSale => salePercent > 0 && saleBasePrice > 0;
+
+  double get saleOldPrice => onSale ? saleBasePrice : myPrice;
+
+  double get saleNewPrice =>
+      onSale ? saleBasePrice * (1 - salePercent / 100) : myPrice;
+
+  String get marketplaceKey {
+    if (marketplace == 'wb' || marketplace == 'ozon') return marketplace;
+    final link = marketplaceUrl.toLowerCase();
+    if (link.contains('wildberries') || link.contains('wb.ru')) return 'wb';
+    if (link.contains('ozon')) return 'ozon';
+    final digits = link.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '';
+    return digits.length >= 10 ? 'ozon' : 'wb';
+  }
+
+  String get marketplaceProductUrl {
+    final link = marketplaceUrl.trim();
+    if (link.startsWith('http')) return link;
+    final key = marketplaceKey;
+    final article = link.replaceAll(RegExp(r'\D'), '');
+    if (article.isEmpty) return '';
+    if (key == 'ozon') return 'https://www.ozon.ru/product/$article/';
+    if (key == 'wb') {
+      return 'https://www.wildberries.ru/catalog/$article/detail.aspx';
+    }
+    return '';
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'sku': sku,
+    'category': category,
+    'size': size,
+    'description': description,
+    'attributes': attributes,
+    'price': price,
+    'purchasePrice': purchasePrice,
+    'quantity': quantity,
+    'minQuantity': minQuantity,
+    'supplier': supplier,
+    'photo': photo,
+    'deliveryId': deliveryId,
+    'photos': photos,
+    'costPrice': costPrice,
+    'marketplacePrice': marketplacePrice,
+    'marketplaceUrl': marketplaceUrl,
+    'marketplace': marketplace,
+    'avitoItemId': avitoItemId,
+    'avitoViews': avitoViews,
+    'avitoContacts': avitoContacts,
+    'avitoFavorites': avitoFavorites,
+    'avitoStatsAt': avitoStatsAt,
+    'discountPercent': discountPercent,
+    'salePercent': salePercent,
+    'saleBasePrice': saleBasePrice,
+    'myPriceOverride': myPriceOverride,
+    'sold': sold,
+    'soldAt': soldAt,
+    'status': status,
+    'salePrice': salePrice,
+    'statusEvents': statusEvents.map((e) => e.toJson()).toList(),
+    'updatedAt': updatedAt,
+  };
+  factory Product.fromJson(Map<String, dynamic> j) => Product(
+    id: '${j['id']}',
+    name: '${j['name'] ?? ''}',
+    sku: '${j['sku'] ?? ''}',
+    category: '${j['category'] ?? 'Без категории'}',
+    size: '${j['size'] ?? ''}',
+    description: '${j['description'] ?? ''}',
+    attributes: (j['attributes'] as Map?)?.map(
+          (key, value) => MapEntry('$key', '$value'),
+        ) ??
+        const {},
+    price: (j['price'] as num?)?.toDouble() ?? 0,
+    purchasePrice: (j['purchasePrice'] as num?)?.toDouble() ?? 0,
+    quantity: (j['quantity'] as num?)?.toDouble() ?? 0,
+    minQuantity: (j['minQuantity'] as num?)?.toDouble() ?? 0,
+    supplier: '${j['supplier'] ?? ''}',
+    photo: '${j['photo'] ?? ''}',
+    deliveryId: '${j['deliveryId'] ?? ''}',
+    photos: (j['photos'] as List? ?? const []).map((e) => e.toString()).toList(),
+    costPrice: (j['costPrice'] as num?)?.toDouble(),
+    marketplacePrice: (j['marketplacePrice'] as num?)?.toDouble() ?? 0,
+    marketplaceUrl: '${j['marketplaceUrl'] ?? ''}',
+    marketplace: '${j['marketplace'] ?? ''}',
+    avitoItemId: '${j['avitoItemId'] ?? ''}',
+    avitoViews: (j['avitoViews'] as num?)?.toInt() ?? 0,
+    avitoContacts: (j['avitoContacts'] as num?)?.toInt() ?? 0,
+    avitoFavorites: (j['avitoFavorites'] as num?)?.toInt() ?? 0,
+    avitoStatsAt: (j['avitoStatsAt'] as num?)?.toInt() ?? 0,
+    discountPercent: (j['discountPercent'] as num?)?.toDouble() ?? 30,
+    salePercent: (j['salePercent'] as num?)?.toDouble() ?? 0,
+    saleBasePrice: (j['saleBasePrice'] as num?)?.toDouble() ?? 0,
+    myPriceOverride: (j['myPriceOverride'] as num?)?.toDouble(),
+    sold: j['sold'] == true,
+    soldAt: (j['soldAt'] as num?)?.toInt() ?? 0,
+    status: '${j['status'] ?? (j['sold'] == true ? 'sold' : 'in_stock')}',
+    salePrice: (j['salePrice'] as num?)?.toDouble() ?? 0,
+    statusEvents: (j['statusEvents'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => ProductStatusEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList(),
+    updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
+  );
+}
+
+extension ProductStatusRecording on Product {
+  void recordStatusEvent(String status, double quantity) {
+    final events = List<ProductStatusEvent>.from(statusEvents)
+      ..add(ProductStatusEvent(
+        status: status,
+        at: DateTime.now().toIso8601String(),
+        quantity: quantity,
+      ));
+    statusEvents = events.length > 50
+        ? events.sublist(events.length - 50)
+        : events;
+  }
+}
+
+class ProductStatusEvent {
+  ProductStatusEvent({
+    required this.status,
+    required this.at,
+    required this.quantity,
+  });
+  final String status;
+  final String at;
+  final double quantity;
+  Map<String, dynamic> toJson() => {
+    'status': status,
+    'at': at,
+    'quantity': quantity,
+  };
+  factory ProductStatusEvent.fromJson(Map<String, dynamic> j) =>
+      ProductStatusEvent(
+        status: '${j['status'] ?? ''}',
+        at: '${j['at'] ?? ''}',
+        quantity: (j['quantity'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+class Delivery {
+  Delivery({
+    required this.id,
+    required this.number,
+    this.name = '',
+    this.date = '',
+    this.supplier = '',
+    this.comment = '',
+    this.totalCost = 0,
+    this.trackItemCost = false,
+    this.updatedAt = 0,
+  });
+  final String id;
+  int number;
+  String name;
+  String date;
+  String supplier;
+  String comment;
+  double totalCost;
+  bool trackItemCost;
+  int updatedAt;
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'number': number,
+    'name': name,
+    'date': date,
+    'supplier': supplier,
+    'comment': comment,
+    'totalCost': totalCost,
+    'trackItemCost': trackItemCost,
+    'updatedAt': updatedAt,
+  };
+  factory Delivery.fromJson(Map<String, dynamic> j) => Delivery(
+    id: '${j['id']}',
+    number: (j['number'] as num?)?.toInt() ?? 0,
+    name: '${j['name'] ?? ''}',
+    date: '${j['date'] ?? ''}',
+    supplier: '${j['supplier'] ?? ''}',
+    comment: '${j['comment'] ?? ''}',
+    totalCost: (j['totalCost'] as num?)?.toDouble() ?? 0,
+    trackItemCost: j['trackItemCost'] == true,
+    updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
+  );
+}
+
 class StockMovement {
   StockMovement({
     required this.id,
@@ -457,4 +736,92 @@ List<List<String>> parseCsv(String text) {
     rows.add(row);
   }
   return rows;
+}
+
+String normalizeSku(String value) {
+  final trimmed = value.trim();
+  if (RegExp(r'^\d+$').hasMatch(trimmed) && trimmed.length < 4) {
+    return trimmed.padLeft(4, '0');
+  }
+  return trimmed;
+}
+
+class Order {
+  Order({
+    required this.id,
+    this.number = 0,
+    this.date = '',
+    this.customer = '',
+    this.phone = '',
+    this.product = '',
+    this.article = '',
+    this.barcode = '',
+    this.pvz = '',
+    this.quantity = 1,
+    this.amount = 0,
+    this.status = 'new',
+    this.source = 'manual',
+    this.comment = '',
+    this.avitoStatus = '',
+    this.avitoDeadline = '',
+    this.updatedAt = 0,
+  });
+
+  String id;
+  int number;
+  String date;
+  String customer;
+  String phone;
+  String product;
+  String article;
+  String barcode;
+  String pvz;
+  double quantity;
+  double amount;
+  String status;
+  String source;
+  String comment;
+  String avitoStatus;
+  String avitoDeadline;
+  int updatedAt;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'number': number,
+    'date': date,
+    'customer': customer,
+    'phone': phone,
+    'product': product,
+    'article': article,
+    'barcode': barcode,
+    'pvz': pvz,
+    'quantity': quantity,
+    'amount': amount,
+    'status': status,
+    'source': source,
+    'comment': comment,
+    'avitoStatus': avitoStatus,
+    'avitoDeadline': avitoDeadline,
+    'updatedAt': updatedAt,
+  };
+
+  factory Order.fromJson(Map<String, dynamic> j) => Order(
+    id: '${j['id']}',
+    number: (j['number'] as num?)?.toInt() ?? 0,
+    date: '${j['date'] ?? ''}',
+    customer: '${j['customer'] ?? ''}',
+    phone: '${j['phone'] ?? ''}',
+    product: '${j['product'] ?? ''}',
+    article: '${j['article'] ?? ''}',
+    barcode: '${j['barcode'] ?? ''}',
+    pvz: '${j['pvz'] ?? ''}',
+    quantity: (j['quantity'] as num?)?.toDouble() ?? 1,
+    amount: (j['amount'] as num?)?.toDouble() ?? 0,
+    status: '${j['status'] ?? 'new'}',
+    source: '${j['source'] ?? 'manual'}',
+    comment: '${j['comment'] ?? ''}',
+    avitoStatus: '${j['avitoStatus'] ?? ''}',
+    avitoDeadline: '${j['avitoDeadline'] ?? ''}',
+    updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
+  );
 }

@@ -1,7 +1,10 @@
 class AppConfig {
   /// Публичный URL общего Apps Script CRM. Его можно передавать в выпуск через
   /// --dart-define=CRM_SERVER_URL=..., он не даёт доступ к данным без сессии.
-  static const serverUrl = String.fromEnvironment('CRM_SERVER_URL');
+  static const serverUrl = String.fromEnvironment(
+    'CRM_SERVER_URL',
+    defaultValue: 'https://168.113.189.186.nip.io',
+  );
   static const sheetId = String.fromEnvironment(
     'CRM_SHEET_ID',
     defaultValue: '',

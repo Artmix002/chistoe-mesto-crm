@@ -78,13 +78,21 @@ class CrmAuthService {
     String operation, {
     String? sessionToken,
     Map<String, dynamic> payload = const {},
+    Duration? timeout,
   }) async {
     if (endpoint.scheme != 'https') {
       throw const CrmAuthException(
         'Адрес CRM-сервера должен использовать HTTPS.',
       );
     }
-    final response = await client.post(
+    final effective = timeout == null
+        ? client
+        : ApiClient(
+            timeout: timeout,
+            clientFactory: client.clientFactory,
+            defaultCancellation: client.defaultCancellation,
+          );
+    final response = await effective.post(
       endpoint,
       headers: const {'content-type': 'application/json; charset=utf-8'},
       body: jsonEncode({
@@ -200,6 +208,15 @@ class CrmAuthService {
         : const [];
   }
 
+  Future<Map<String, dynamic>> proxy(
+    String sessionToken,
+    Map<String, dynamic> request,
+  ) => _call(
+    'integrationProxy',
+    sessionToken: sessionToken,
+    payload: {'request': request},
+  );
+
   Future<Map<String, dynamic>> migrateConfiguration(
     String sessionToken,
     Map<String, dynamic> configuration,
@@ -209,14 +226,106 @@ class CrmAuthService {
     payload: {'configuration': configuration},
   );
 
-  Future<Map<String, dynamic>> proxy(
+  Future<Map<String, dynamic>> importSheets(
     String sessionToken,
-    Map<String, dynamic> request,
+    Map<String, dynamic> sheets,
   ) => _call(
-    'integrationProxy',
+    'importSheets',
     sessionToken: sessionToken,
-    payload: {'request': request},
+    payload: {'sheets': sheets},
+    timeout: const Duration(minutes: 2),
   );
+
+  Future<String> uploadPhoto(String sessionToken, List<int> bytes) async {
+    final response = await _call(
+      'uploadPhoto',
+      sessionToken: sessionToken,
+      payload: {'dataBase64': base64Encode(bytes)},
+      timeout: const Duration(seconds: 60),
+    );
+    final url = response['url']?.toString() ?? '';
+    if (url.isEmpty) {
+      throw const CrmAuthException('Сервер не вернул адрес фото.');
+    }
+    return url;
+  }
+
+  /// Список SKU, которые реально попадают в фид автозагрузки Авито.
+  Future<Map<String, dynamic>> avitoFeedSkus(String sessionToken) => _call(
+    'avitoFeedSkus',
+    sessionToken: sessionToken,
+    timeout: const Duration(seconds: 20),
+  );
+
+  /// Полное обновление справочника категорий (дерево + поля).
+  Future<Map<String, dynamic>> avitoCatalogSync(
+    String sessionToken, {
+    required String clientId,
+    required String clientSecret,
+    bool onlyFailed = false,
+  }) => _call(
+    'avitoCatalogSync',
+    sessionToken: sessionToken,
+    payload: {
+      'clientId': clientId,
+      'clientSecret': clientSecret,
+      if (onlyFailed) 'onlyFailed': true,
+    },
+    timeout: const Duration(minutes: 30),
+  );
+
+  /// Быстрое обновление только дерева категорий (1 запрос к Авито).
+  Future<Map<String, dynamic>> avitoCatalogTree(
+    String sessionToken, {
+    required String clientId,
+    required String clientSecret,
+  }) => _call(
+    'avitoCatalogTree',
+    sessionToken: sessionToken,
+    payload: {'clientId': clientId, 'clientSecret': clientSecret},
+    timeout: const Duration(minutes: 2),
+  );
+
+  /// Кэшированный справочник: весь список или поля категории по slug.
+  Future<Map<String, dynamic>> avitoCatalog(
+    String sessionToken, {
+    String? slug,
+  }) => _call(
+    'avitoCatalog',
+    sessionToken: sessionToken,
+    payload: {if (slug != null && slug.isNotEmpty) 'slug': slug},
+    timeout: const Duration(seconds: 20),
+  );
+
+  /// Дети категории (пустой parent — корневые): маленький ответ.
+  Future<Map<String, dynamic>> avitoCatalogChildren(
+    String sessionToken, {
+    String parent = '',
+  }) => _call(
+    'avitoCatalogChildren',
+    sessionToken: sessionToken,
+    payload: {'parent': parent},
+    timeout: const Duration(seconds: 20),
+  );
+
+  /// Поиск категорий по названию на сервере.
+  Future<Map<String, dynamic>> avitoCatalogSearch(
+    String sessionToken,
+    String query,
+  ) => _call(
+    'avitoCatalogSearch',
+    sessionToken: sessionToken,
+    payload: {'query': query},
+    timeout: const Duration(seconds: 20),
+  );
+
+  /// Ход загрузки справочника.
+  Future<Map<String, dynamic>> avitoCatalogProgress(String sessionToken) =>
+      _call(
+        'avitoCatalogProgress',
+        sessionToken: sessionToken,
+        timeout: const Duration(seconds: 15),
+      );
 }
 
 bool isValidPin(String value) => RegExp(r'^\d{4}$').hasMatch(value);

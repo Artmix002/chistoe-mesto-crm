@@ -10,6 +10,12 @@ Map<String, dynamic> buildSyncPayload(
   required Iterable<StockMovement> stockMovements,
   required Iterable<List<String>> manualDeals,
   required Iterable<Map<String, dynamic>> businessTransactions,
+  Iterable<Map<String, dynamic>> products = const [],
+  Iterable<Map<String, dynamic>> deliveries = const [],
+  Iterable<Map<String, dynamic>> orders = const [],
+  Iterable<String> deletedProductIds = const [],
+  Iterable<String> deletedDeliveryIds = const [],
+  Iterable<String> deletedOrderIds = const [],
   required Iterable<Map<String, dynamic>> closedPeriods,
   Map<String, dynamic>? closedPeriod,
   Iterable<Map<String, dynamic>> serviceCatalog = const [],
@@ -50,6 +56,27 @@ Map<String, dynamic> buildSyncPayload(
         'movements': stockMovements
             .map((movement) => movement.toJson())
             .toList(),
+      };
+    case 'Поставка':
+      return {
+        ...base,
+        'scope': 'deliveries',
+        'items': deliveries.map(Map<String, dynamic>.from).toList(),
+        'deletedIds': deletedDeliveryIds.toList(),
+      };
+    case 'Заказ':
+      return {
+        ...base,
+        'scope': 'orders',
+        'items': orders.map(Map<String, dynamic>.from).toList(),
+        'deletedIds': deletedOrderIds.toList(),
+      };
+    case 'Товар на продажу':
+      return {
+        ...base,
+        'scope': 'products',
+        'items': products.map(Map<String, dynamic>.from).toList(),
+        'deletedIds': deletedProductIds.toList(),
       };
     case 'Сделка':
       return {

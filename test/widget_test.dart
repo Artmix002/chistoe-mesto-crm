@@ -36,6 +36,7 @@ import 'package:crm/widgets/accounting_table.dart';
 import 'package:crm/widgets/accounting_categories_dialog.dart';
 import 'package:crm/widgets/local_operations_list.dart';
 import 'package:crm/widgets/stock_page.dart';
+import 'package:crm/widgets/products_page.dart';
 import 'package:crm/widgets/deals_kanban_board.dart';
 import 'package:crm/widgets/deals_grouped_table.dart';
 import 'package:crm/widgets/client_results_list.dart';
@@ -51,6 +52,8 @@ import 'package:crm/api_client.dart';
 import 'package:crm/repositories.dart';
 import 'package:crm/sync_payload.dart';
 import 'package:crm/workspace_models.dart';
+import 'package:crm/migration_check.dart';
+import 'package:crm/products_excel.dart';
 import 'package:crm/ai_service.dart';
 import 'package:crm/app_notification.dart';
 import 'package:crm/stock_logic.dart';
@@ -693,14 +696,38 @@ void main() {
       Uri.parse('https://crm.example.com/sync'),
       'secret',
     );
-    expect(await repository.readSheet('Основное'), [
+    expect(await repository.readSheet('Основное', area: 'finance'), [
       ['Дата', 'Сумма'],
       ['31.08.2026', '1 200,50'],
     ]);
     final body = jsonDecode(client.sentBody! as String) as Map;
     expect(body['operation'], 'readSheet');
     expect(body['sheet'], 'Основное');
+    expect(body['area'], 'finance');
     expect(body['syncToken'], 'secret');
+  });
+
+  test('auth service uploads sheet rows to the VPS', () async {
+    final client = _FakeApiClient(http.Response('{"ok":true}', 200));
+    final service = CrmAuthService(
+      endpoint: Uri.parse('https://crm.example.com/sync'),
+      client: client,
+    );
+    await service.importSheets('test-token', {
+      'Август': {
+        'area': 'deals',
+        'rows': [
+          ['Дата', 'Стоимость'],
+          ['31.08.2026', '15000'],
+        ],
+      },
+    });
+    final body =
+        jsonDecode(client.sentBody! as String) as Map<String, dynamic>;
+    expect(body['operation'], 'importSheets');
+    expect(body['sessionToken'], 'test-token');
+    expect((body['sheets'] as Map)['Август']['area'], 'deals');
+    expect((body['sheets'] as Map)['Август']['rows'], hasLength(2));
   });
 
   test('sheets repository restores protected workspace snapshots', () async {
@@ -736,6 +763,28 @@ void main() {
 
   test('navigation pages and icons stay aligned', () {
     expect(crmPages.length, crmPageIcons.length);
+  });
+
+  test('migration report compares local and server counts', () {
+    final report = buildMigrationReport(
+      local: {'clients': 2, 'manualDeals': 5},
+      server: {'clients': 2, 'manualDeals': 4},
+    );
+    expect(report.sections.first.title, 'Клиенты');
+    expect(report.sections.first.matches, isTrue);
+    expect(report.isComplete, isFalse);
+    expect(report.mismatches.single.title, 'Ручные сделки');
+  });
+
+  test('migration report treats absent server sections as zero', () {
+    final report = buildMigrationReport(
+      local: {'clients': 1, 'unknown': 9},
+      server: const {},
+    );
+    expect(report.sections, hasLength(migrationSectionTitles.length));
+    expect(report.sections.first.local, 1);
+    expect(report.sections.first.server, 0);
+    expect(report.isComplete, isFalse);
   });
 
   test('compact navigation activates for narrow CRM windows', () {
@@ -1324,8 +1373,68 @@ void main() {
     expect(queue.items.single.payload['name'], 'Новое имя');
   });
 
-  test(
-    'sync queue retains rejected changes and removes only confirmations',
+  test('queue generation invalidates a cloud read even after sync drains it', () {
+    final queue = SyncQueue();
+    final startedAt = queue.localGeneration;
+    expect(queue.isUnchangedAndEmptySince(startedAt), isTrue);
+
+    queue.enqueue(entity: 'Клиент', details: 'изменён');
+    final sentId = queue.items.single.id;
+    expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
+    queue.removeAccepted([sentId]);
+    expect(queue.items, isEmpty);
+    expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
+    expect(queue.isUnchangedAndEmptySince(queue.localGeneration), isTrue);
+  });
+
+  test('queue generation changes when a duplicate snapshot is updated', () {
+    final queue = SyncQueue();
+    queue.enqueue(entity: 'Клиент', details: 'изменён', payload: {'name': 'А'});
+    final startedAt = queue.localGeneration;
+    queue.enqueue(entity: 'Клиент', details: 'изменён', payload: {'name': 'Б'});
+    expect(queue.items, hasLength(1));
+    expect(queue.localGeneration, greaterThan(startedAt));
+    expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
+  });
+
+  test('loading queue invalidates an earlier cloud read', () {
+    final queue = SyncQueue();
+    final startedAt = queue.localGeneration;
+    queue.load([]);
+    expect(queue.items, isEmpty);
+    expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
+  });
+
+  test('conflicted change waits for manual review instead of retrying', () {
+    final queue = SyncQueue();
+    queue.enqueue(
+      entity: 'Клиент',
+      details: 'изменён',
+      payload: {
+        'schemaVersion': SheetsSchema.version,
+        'kind': 'snapshot',
+        'scope': 'clients',
+      },
+    );
+    final id = queue.items.single.id;
+    queue.markNeedsReview([id], error: 'Конфликт синхронизации');
+    expect(queue.reviewCount, 1);
+    expect(queue.items.single.needsReview, isTrue);
+    expect(
+      queue.hasRetryableItems(DateTime.now().add(const Duration(days: 1))),
+      isFalse,
+    );
+
+    final restored = SyncQueue()..load([queue.items.single.toJson()]);
+    expect(restored.items.single.needsReview, isTrue);
+    restored.clearNeedsReview();
+    expect(restored.reviewCount, 0);
+    expect(restored.items.single.attempts, 0);
+    expect(restored.items.single.lastError, isNull);
+    expect(restored.hasRetryableItems(DateTime.now()), isTrue);
+  });
+
+  test('sync queue retains rejected changes and removes only confirmations',
     () {
       final queue = SyncQueue();
       queue.enqueue(entity: 'Клиент', details: 'создан');
@@ -1574,6 +1683,61 @@ void main() {
       expect(result.revisions['clients'], 4);
     },
   );
+
+  test('products excel roundtrip keeps fields', () {
+    final bytes = buildProductsExcel(
+      [
+        Product(
+          id: 'p1',
+          name: 'Керамика',
+          sku: 'SKU-1',
+          category: 'Материалы',
+          quantity: 5,
+          price: 2500,
+          deliveryId: 'd1',
+        ),
+      ],
+      [Delivery(id: 'd1', number: 3, name: 'Паллет')],
+    );
+    final rows = parseProductsExcel(bytes);
+    expect(rows, hasLength(1));
+    expect(rows.single['Артикул'], 'SKU-1');
+    expect(rows.single['Название'], 'Керамика');
+    expect(rows.single['Количество'], '5');
+    expect(rows.single['Поставка №'], '3');
+  });
+
+  test('product keeps catalog fields and syncs as products scope', () {
+    final product = Product(
+      id: 'product-1',
+      name: 'Керамика',
+      sku: 'CRM-001',
+      category: 'Материалы',
+      price: 2500,
+      purchasePrice: 1200,
+      quantity: 7,
+      minQuantity: 2,
+      supplier: 'Поставщик',
+      photo: 'https://example.com/photo.jpg',
+    );
+    final restored = Product.fromJson(product.toJson());
+    expect(restored.name, 'Керамика');
+    expect(restored.sku, 'CRM-001');
+    expect(restored.price, 2500);
+    expect(restored.quantity, 7);
+    final payload = buildSyncPayload(
+      'Товар на продажу',
+      clients: const [],
+      stockItems: const [],
+      stockMovements: const [],
+      manualDeals: const [],
+      businessTransactions: const [],
+      closedPeriods: const [],
+      products: [product.toJson()],
+    );
+    expect(payload['scope'], 'products');
+    expect((payload['items'] as List).single['sku'], 'CRM-001');
+  });
 
   test('sync payload scopes CRM data and excludes integration secrets', () {
     final payload = buildSyncPayload(
@@ -3319,6 +3483,42 @@ https://crm.example.com/sync?syncToken=query-secret''';
     expect(find.text('-1200 ₽'), findsOneWidget);
     expect(find.text('30.08.2026 • Google Sheets'), findsOneWidget);
     expect(find.text('+500 ₽'), findsOneWidget);
+  });
+
+  testWidgets('products page renders catalog in a scrollable parent', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ProductsPage(
+              items: [
+                Product(id: 'p1', name: 'Керамика', sku: 'CRM-1', price: 2500),
+              ],
+              deliveries: const [],
+              selectedDeliveryId: '',
+              draft: null,
+              canEdit: true,
+              onSelectDelivery: (_) {},
+              onNewDelivery: () {},
+              onEditDelivery: (_) {},
+              onDeleteDelivery: (_) async {},
+              onStartProduct: () {},
+              onSaveProduct: (_) {},
+              onDeleteProduct: (_) async {},
+              onCloseDraft: () {},
+              onEditProduct: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining('Керамика'), findsOneWidget);
+    expect(find.text('CRM-1'), findsOneWidget);
+    expect(find.text('Товар'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

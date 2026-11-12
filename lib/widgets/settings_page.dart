@@ -44,6 +44,8 @@ class SettingsPage extends StatelessWidget {
     required this.onSyncPendingChanges,
     required this.onExportPendingChanges,
     required this.auditEntries,
+    this.onRetryConflicts,
+    this.conflictsCount = 0,
     this.onSetupAi,
     this.aiConfigured = false,
   });
@@ -79,6 +81,8 @@ class SettingsPage extends StatelessWidget {
   final Future<void> Function() onSyncPendingChanges;
   final Future<void> Function() onExportPendingChanges;
   final List<AuditEntry> auditEntries;
+  final Future<void> Function()? onRetryConflicts;
+  final int conflictsCount;
   final Future<void> Function()? onSetupAi;
   final bool aiConfigured;
 
@@ -396,6 +400,23 @@ class SettingsPage extends StatelessWidget {
                   'Последняя синхронизация: ${_formatDateTime(lastPendingChangesSync!)}',
                   style: TextStyle(color: muted, fontSize: 12),
                 ),
+              if (conflictsCount > 0) ...[
+                Text(
+                  'Конфликтов ожидает проверки: $conflictsCount',
+                  style: const TextStyle(color: Colors.red),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: onRetryConflicts == null ||
+                            pendingChangesSyncing
+                        ? null
+                        : () => unawaited(onRetryConflicts!()),
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Повторить после проверки'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

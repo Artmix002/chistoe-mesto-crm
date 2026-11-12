@@ -20,6 +20,8 @@ class DashboardShell extends StatelessWidget {
     this.selectedPage = 0,
     this.mobileDestinations = const [],
     this.onPageSelected,
+    this.sidebarVisible = true,
+    this.onToggleSidebar,
     required this.body,
   });
 
@@ -34,6 +36,8 @@ class DashboardShell extends StatelessWidget {
   final List<DashboardMobileDestination> mobileDestinations;
   final ValueChanged<int>? onPageSelected;
   final Widget body;
+  final bool sidebarVisible;
+  final VoidCallback? onToggleSidebar;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -57,7 +61,8 @@ class DashboardShell extends StatelessWidget {
             : null,
         body: Row(
           children: [
-            if (!compact) SizedBox(width: 220, child: sidebar),
+            if (!compact && sidebarVisible)
+              SizedBox(width: 220, child: sidebar),
             Expanded(
               child: Container(
                 color: darkMode
@@ -75,6 +80,8 @@ class DashboardShell extends StatelessWidget {
                         hasUnreadNotifications: hasUnreadNotifications,
                         onOpenNotifications: onOpenNotifications,
                         onThemeChanged: onThemeChanged,
+                        sidebarVisible: sidebarVisible,
+                        onToggleSidebar: onToggleSidebar,
                       ),
                       Expanded(
                         child: SingleChildScrollView(
@@ -199,6 +206,8 @@ class _Header extends StatelessWidget {
     required this.hasUnreadNotifications,
     required this.onOpenNotifications,
     required this.onThemeChanged,
+    this.sidebarVisible = true,
+    this.onToggleSidebar,
   });
 
   final bool compact;
@@ -208,6 +217,8 @@ class _Header extends StatelessWidget {
   final bool hasUnreadNotifications;
   final VoidCallback onOpenNotifications;
   final ValueChanged<bool> onThemeChanged;
+  final bool sidebarVisible;
+  final VoidCallback? onToggleSidebar;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -265,6 +276,17 @@ class _Header extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (!compact && onToggleSidebar != null)
+                IconButton(
+                  tooltip: sidebarVisible ? 'Скрыть меню' : 'Показать меню',
+                  onPressed: onToggleSidebar,
+                  icon: Icon(
+                    sidebarVisible ? Icons.menu_open : Icons.menu,
+                    color: darkMode
+                        ? const Color(0xFFD7DAE0)
+                        : const Color(0xFF6E737C),
+                  ),
+                ),
               Stack(
                 clipBehavior: Clip.none,
                 children: [

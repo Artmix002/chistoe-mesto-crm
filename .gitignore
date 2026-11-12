@@ -46,6 +46,10 @@ app.*.map.json
 *.secrets
 secrets/
 
+# Database dumps contain personal CRM data and must never be committed
+backend/vps_api/backups/
+*.sql.gz
+
 # Исходные фотографии для исследований Авито не нужны приложению и слишком
 # велики для исходного репозитория/релизов.
 Avito_Drive2_Photos/
@@ -54,3 +58,7 @@ Avito_Drive2_Photos/
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Локальные виртуальные окружения для проверки backend-тестов
+.venv/
+.venv311/

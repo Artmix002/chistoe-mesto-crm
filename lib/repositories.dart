@@ -20,6 +20,7 @@ class SheetsRepository {
   final String protectedToken;
   Future<List<List<String>>> readSheet(
     String sheet, {
+    String? area,
     RequestCancellation? cancellation,
   }) async {
     final endpoint = protectedEndpoint;
@@ -32,6 +33,7 @@ class SheetsRepository {
         body: jsonEncode({
           'operation': 'readSheet',
           'sheet': sheet,
+          if (area != null && area.isNotEmpty) 'area': area,
           'sessionToken': protectedToken,
           'syncToken': protectedToken,
         }),
