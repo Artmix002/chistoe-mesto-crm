@@ -1,0 +1,33 @@
+name: Опубликовать собранную Windows-версию
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: ID сборки с архивом Windows
+        required: true
+      version:
+        description: Номер версии сборки
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CRM-windows
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: CRM 1.0.${{ inputs.version }}
+          make_latest: true
+          files: release/CRM-windows.zip
+          fail_on_unmatched_files: true
