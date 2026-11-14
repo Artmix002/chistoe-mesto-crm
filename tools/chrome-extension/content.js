@@ -35,8 +35,11 @@
       const itemUrl = links.find((href) => /(?:\/item\/|_\d{7,}|\/\d{7,})/.test(href)) || embedded;
       const source = `${document.body.innerText}\n${document.documentElement.innerHTML}`;
       const article = (source.match(/(?:Артикул|арт\.?|SKU)[:\s№#-]*([A-Za-zА-Яа-я0-9_-]+)/i) || [])[1] || '';
+      const productLine = (document.body.innerText.match(/(?:Заказ\s*\n?)?([^\n]+?)\s+\d+\s*[×xх]\s*([\d\s]+)\s*₽/i) || []);
+      const productTitle = productLine[1] ? productLine[1].trim() : '';
+      const productPrice = productLine[2] ? productLine[2].replace(/\s+/g, '') : '';
       try {
-        if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl, article});
+        if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl, article, productTitle, productPrice});
       } catch (_) {}
     };
     let attempts = 0;

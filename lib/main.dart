@@ -13976,7 +13976,11 @@ end tell
         article = _articleForTitle('${item['title'] ?? ''}');
       }
       if (article.isEmpty) {
-        final target = _normalizeOrderTitle('${item['title'] ?? ''}');
+        final target = _normalizeOrderTitle(
+          '${item['productTitle'] ?? item['title'] ?? ''}',
+        );
+        final detailPrice =
+            _excelNumber('${item['productPrice'] ?? ''}') ?? amount;
         final candidates = products
             .where(
               (product) =>
@@ -13986,15 +13990,15 @@ end tell
             .toList();
         if (candidates.length == 1) {
           article = candidates.single.sku;
-        } else if (candidates.length > 1 && amount > 0) {
+        } else if (candidates.length > 1 && detailPrice > 0) {
           candidates.sort(
-            (a, b) => (a.marketplacePrice - amount).abs().compareTo(
-              (b.marketplacePrice - amount).abs(),
+            (a, b) => (a.marketplacePrice - detailPrice).abs().compareTo(
+              (b.marketplacePrice - detailPrice).abs(),
             ),
           );
-          final best = (candidates.first.marketplacePrice - amount).abs();
+          final best = (candidates.first.marketplacePrice - detailPrice).abs();
           final tied = candidates
-              .where((p) => (p.marketplacePrice - amount).abs() == best)
+              .where((p) => (p.marketplacePrice - detailPrice).abs() == best)
               .length;
           if (tied == 1) article = candidates.first.sku;
         }

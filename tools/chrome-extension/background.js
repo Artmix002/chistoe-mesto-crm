@@ -35,6 +35,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (!message.itemUrl && !message.article) return;
   entry.order.itemUrl = message.itemUrl || '';
   entry.order.article = message.article || '';
+  entry.order.productTitle = message.productTitle || '';
+  entry.order.productPrice = message.productPrice || '';
   pending.delete(sender.tab.id);
   chrome.tabs.remove(sender.tab.id).catch(() => {});
   if (!pending.size) send(activeBatch);
