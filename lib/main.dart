@@ -13578,26 +13578,6 @@ $instructions
     } catch (_) {}
   }
 
-  String _articleForTitle(String title) {
-    final target = _normalizeOrderTitle(title);
-    if (target.isEmpty) return '';
-    final candidates = <Product>[];
-    for (final product in products) {
-      final name = _normalizeOrderTitle(product.name);
-      if (name.isEmpty) continue;
-      if (target == name || target.contains(name) || name.contains(target)) {
-        candidates.add(product);
-      }
-    }
-    if (candidates.isEmpty) return '';
-    final exact = candidates.where(
-      (p) => _normalizeOrderTitle(p.name) == target,
-    );
-    if (exact.length == 1) return exact.first.sku;
-    if (candidates.length == 1) return candidates.first.sku;
-    return '';
-  }
-
   Future<Map<String, String>> _avitoOrderExtra(String id) async {
     const js =
         r'''(()=>{const b=document.body.innerText;const m=b.match(/Назовите номер заказа:\s*([\d\s]+)/);const lines=b.split('\n').map(s=>s.trim());let pvz='';for(const line of lines){if(/^г\s.+,\s*ул/i.test(line)){pvz=line;break;}}return JSON.stringify({barcode:m?m[1].replace(/\s+/g,''):'',pvz})})()''';
@@ -13972,38 +13952,6 @@ end tell
           }
         }
       }
-      if (article.isEmpty) {
-        article = _articleForTitle('${item['title'] ?? ''}');
-      }
-      if (article.isEmpty) {
-        final target = _normalizeOrderTitle(
-          '${item['productTitle'] ?? item['title'] ?? ''}',
-        );
-        final detailPrice =
-            _excelNumber('${item['productPrice'] ?? ''}') ?? amount;
-        final candidates = products
-            .where(
-              (product) =>
-                  _normalizeOrderTitle(product.name) == target &&
-                  product.marketplacePrice > 0,
-            )
-            .toList();
-        if (candidates.length == 1) {
-          article = candidates.single.sku;
-        } else if (candidates.length > 1 && detailPrice > 0) {
-          candidates.sort(
-            (a, b) => (a.marketplacePrice - detailPrice).abs().compareTo(
-              (b.marketplacePrice - detailPrice).abs(),
-            ),
-          );
-          final best = (candidates.first.marketplacePrice - detailPrice).abs();
-          final tied = candidates
-              .where((p) => (p.marketplacePrice - detailPrice).abs() == best)
-              .length;
-          if (tied == 1) article = candidates.first.sku;
-        }
-      }
-
       if (article.isEmpty) article = existing?.article ?? '';
       // Приоритет: полный штрихкод из карточки → номер из строки списка →
       // то, что уже сохранено в CRM.
@@ -14171,9 +14119,7 @@ end tell
             }
           }
         }
-        final article = articles.isNotEmpty
-            ? articles.join(', ')
-            : _articleForTitle(title);
+        final article = articles.join(', ');
         final createdAt = '${raw['createdAt'] ?? ''}';
         final id = 'avito-$avitoId';
         final index = orders.indexWhere((order) => order.id == id);
