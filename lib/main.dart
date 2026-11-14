@@ -13476,6 +13476,8 @@ $instructions
         ),
       ),
     );
+    // Даём расширению время прочитать список и отправить его в локальный мост.
+    await Future<void>.delayed(const Duration(seconds: 5));
   }
 
   Future<void> _bulkUpdateProducts(

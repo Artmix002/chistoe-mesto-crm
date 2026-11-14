@@ -28,6 +28,7 @@ class OrdersView extends StatefulWidget {
   final Future<void> Function(Order order) onDelete;
   final VoidCallback onChanged;
   final Future<void> Function(Order order)? onLinkProduct;
+
   /// Ссылка на объявление товара, связанного с заказом (если есть).
   final String Function(Order order)? productUrlFor;
 
@@ -40,6 +41,7 @@ class _OrdersViewState extends State<OrdersView> {
   String sort = 'number';
   String query = '';
   late int lastSyncAt = widget.lastAvitoSync;
+  String? syncMessage;
 
   static const _statusTitles = {
     'all': 'Все',
@@ -169,8 +171,7 @@ class _OrdersViewState extends State<OrdersView> {
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
     final surface = dark ? const Color(0xFF171A21) : Colors.white;
-    final background =
-        dark ? const Color(0xFF0F1117) : const Color(0xFFF4F6FB);
+    final background = dark ? const Color(0xFF0F1117) : const Color(0xFFF4F6FB);
     final border = dark ? const Color(0xFF2A2F3A) : const Color(0xFFE4E8F0);
     final muted = dark ? const Color(0xFF9BA3B4) : const Color(0xFF64748B);
     final list = _filtered;
@@ -210,8 +211,13 @@ class _OrdersViewState extends State<OrdersView> {
                               itemCount: list.length,
                               separatorBuilder: (_, _) =>
                                   const SizedBox(height: 10),
-                              itemBuilder: (context, index) =>
-                                  _orderCard(list[index], dark, surface, border, muted),
+                              itemBuilder: (context, index) => _orderCard(
+                                list[index],
+                                dark,
+                                surface,
+                                border,
+                                muted,
+                              ),
                             ),
                     ),
                   ],
@@ -280,18 +286,26 @@ class _OrdersViewState extends State<OrdersView> {
               const Spacer(),
               OutlinedButton.icon(
                 onPressed: () async {
+                  final before = widget.orders.length;
                   final syncedAt = await widget.onLoadAvito();
                   if (mounted && syncedAt > 0) {
-                    setState(() => lastSyncAt = syncedAt);
+                    setState(() {
+                      lastSyncAt = syncedAt;
+                      syncMessage =
+                          'Обновление завершено: заказов ${widget.orders.length} '
+                          '(новых ${widget.orders.length - before})';
+                    });
                   } else {
-                    setState(() {});
+                    setState(() => syncMessage = 'Обновление не завершено');
                   }
                 },
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
                   side: const BorderSide(color: Color(0x66FFFFFF)),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
                 ),
                 icon: const Icon(Icons.cloud_download_outlined),
                 label: const Text('Загрузить из Авито'),
@@ -307,8 +321,10 @@ class _OrdersViewState extends State<OrdersView> {
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: const Color(0xFF1E3A8A),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
                 ),
                 icon: const Icon(Icons.add),
                 label: const Text('Новый заказ'),
@@ -321,6 +337,17 @@ class _OrdersViewState extends State<OrdersView> {
             ],
           ),
           const SizedBox(height: 18),
+          if (syncMessage != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  syncMessage!,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
           Row(
             children: [
               _stat(
@@ -329,11 +356,7 @@ class _OrdersViewState extends State<OrdersView> {
                 Icons.inventory_2_outlined,
               ),
               const SizedBox(width: 10),
-              _stat(
-                'Активные',
-                '$_activeCount',
-                Icons.local_shipping_outlined,
-              ),
+              _stat('Активные', '$_activeCount', Icons.local_shipping_outlined),
               const SizedBox(width: 10),
               _stat(
                 'В доставке',
@@ -341,11 +364,7 @@ class _OrdersViewState extends State<OrdersView> {
                 Icons.payments_outlined,
               ),
               const SizedBox(width: 10),
-              _stat(
-                'Возвраты',
-                '$_returnsCount',
-                Icons.keyboard_return,
-              ),
+              _stat('Возвраты', '$_returnsCount', Icons.keyboard_return),
             ],
           ),
         ],
@@ -483,9 +502,7 @@ class _OrdersViewState extends State<OrdersView> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
-                color: selected
-                    ? Colors.white.withValues(alpha: 0.22)
-                    : border,
+                color: selected ? Colors.white.withValues(alpha: 0.22) : border,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
@@ -650,8 +667,10 @@ class _OrdersViewState extends State<OrdersView> {
                               [
                                 order.avitoStatus,
                                 if (order.avitoDeadline.isNotEmpty)
-                                  order.avitoDeadline
-                                      .replaceFirst('До ', 'до '),
+                                  order.avitoDeadline.replaceFirst(
+                                    'До ',
+                                    'до ',
+                                  ),
                               ].join(' '),
                               const Color(0xFFB45309),
                             ),
@@ -735,9 +754,9 @@ class _OrdersViewState extends State<OrdersView> {
         onTap: () async {
           await Clipboard.setData(ClipboardData(text: code));
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Штрихкод $code скопирован')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Штрихкод $code скопирован')));
         },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
