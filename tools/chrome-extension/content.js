@@ -24,13 +24,16 @@
   };
   const orderMatch = location.pathname.match(/^\/orders\/(\d+)/);
   if (orderMatch) {
-    const links = [...document.querySelectorAll('a[href]')]
-      .map((a) => a.href)
-      .filter((href) => /avito\.ru\/(?:[^/]+\/)?(?:item|[\w-]+_\d{7,})/.test(href));
-    const itemUrl = links.find((href) => !href.includes('/orders/')) || '';
-    try {
-      if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl});
-    } catch (_) {}
+    setTimeout(() => {
+      const links = [...document.querySelectorAll('a[href]')]
+        .map((a) => a.href)
+        .filter((href) => href.includes('avito.ru') && !href.includes('/orders/') &&
+          !href.includes('/profile') && !href.includes('/help'));
+      const itemUrl = links.find((href) => /(?:\/item\/|_\d{7,}|\/\d{7,})/.test(href)) || '';
+      try {
+        if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl});
+      } catch (_) {}
+    }, 2500);
     return;
   }
   const extractDetails = () => {
