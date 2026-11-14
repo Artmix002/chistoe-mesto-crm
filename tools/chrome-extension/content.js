@@ -22,6 +22,17 @@
       }).filter(Boolean);
     return [...new Map(rows.map((row) => [row.id, row])).values()];
   };
+  const orderMatch = location.pathname.match(/^\/orders\/(\d+)/);
+  if (orderMatch) {
+    const links = [...document.querySelectorAll('a[href]')]
+      .map((a) => a.href)
+      .filter((href) => /avito\.ru\/(?:[^/]+\/)?(?:item|[\w-]+_\d{7,})/.test(href));
+    const itemUrl = links.find((href) => !href.includes('/orders/')) || '';
+    try {
+      if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl});
+    } catch (_) {}
+    return;
+  }
   const extractDetails = () => {
     const body = text(document.body);
     const number = body.match(/(?:Назовите номер заказа|номер заказа|этот номер)[:\s№]*([\d\s]{6,})/i);

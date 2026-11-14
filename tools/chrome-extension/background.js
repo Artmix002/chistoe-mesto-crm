@@ -1,13 +1,33 @@
 const endpoint = 'http://127.0.0.1:47621/avito/orders';
+const pending = new Map();
+let activeBatch = [];
+
+const send = (orders) => fetch(endpoint, {method: 'POST', headers: {'content-type': 'application/json'},
+  body: JSON.stringify({source: 'chrome-extension', orders})}).catch(() => {});
+
+const readDetails = async (orders) => {
+  activeBatch = orders;
+  for (const order of orders) {
+    const tab = await chrome.tabs.create({url: order.url, active: false});
+    pending.set(tab.id, {order, tabId: tab.id});
+  }
+};
+
+chrome.tabs.onRemoved.addListener((tabId) => pending.delete(tabId));
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== 'orders' || !Array.isArray(message.orders)) return;
-  fetch(endpoint, {
-    method: 'POST',
-    headers: {'content-type': 'application/json'},
-    body: JSON.stringify({source: 'chrome-extension', tabId: sender.tab?.id ?? null,
-      url: message.url || '', orders: message.orders})
-  }).catch(() => {
-    // CRM may not be running yet; the next page mutation retries the delivery.
+  readDetails(message.orders).then(() => {
+    if (!pending.size) send(message.orders);
   });
+});
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'order-detail' || !sender.tab?.id) return;
+  const entry = pending.get(sender.tab.id);
+  if (!entry) return;
+  entry.order.itemUrl = message.itemUrl || '';
+  pending.delete(sender.tab.id);
+  chrome.tabs.remove(sender.tab.id).catch(() => {});
+  if (!pending.size) send(activeBatch);
 });
