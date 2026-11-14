@@ -36,7 +36,7 @@
       try {
         if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl});
       } catch (_) {}
-    }, 2500);
+    }, 7000);
     return;
   }
   const extractDetails = () => {
