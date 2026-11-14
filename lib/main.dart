@@ -364,6 +364,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   final Map<String, int> _cloudRevisions = {};
   final SecretStore secretStore = const SecretStore();
   final RequestCancellation _lifecycleCancellation = RequestCancellation();
+  HttpServer? _ordersBridge;
   late final ApiClient _apiClient;
   CrmAuthService? _authService;
   bool _serverConfigurationInitialized = false;
@@ -1186,6 +1187,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       timeout: AppConstants.networkTimeout,
       defaultCancellation: _lifecycleCancellation,
     );
+    unawaited(_startOrdersBridge());
     _loadPrefs();
     unawaited(_refreshAvitoAudioCacheUsage());
     avitoAudioPositionSubscription = avitoAudioPlayer.positionStream.listen((
@@ -1224,6 +1226,53 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       const Duration(minutes: 1),
       (_) => unawaited(_sendScheduledAppointmentReminders()),
     );
+  }
+
+  Future<void> _startOrdersBridge() async {
+    try {
+      _ordersBridge = await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        47621,
+      );
+      await for (final request in _ordersBridge!) {
+        request.response.headers
+          ..set('access-control-allow-origin', '*')
+          ..set('access-control-allow-headers', 'content-type')
+          ..set('access-control-allow-methods', 'POST, OPTIONS');
+        if (request.method == 'OPTIONS') {
+          request.response.statusCode = HttpStatus.noContent;
+          await request.response.close();
+          continue;
+        }
+        if (request.method == 'POST' && request.uri.path == '/avito/orders') {
+          try {
+            final body = await utf8.decoder.bind(request).join();
+            final data = jsonDecode(body);
+            final rows = data is Map ? data['orders'] : null;
+            final result = rows is List
+                ? _applyAvitoOrderRows(rows)
+                : (added: 0, updated: 0);
+            await _saveCrmData();
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(
+              jsonEncode({
+                'ok': true,
+                'added': result.added,
+                'updated': result.updated,
+              }),
+            );
+          } catch (error) {
+            request.response.statusCode = HttpStatus.badRequest;
+            request.response.write(
+              jsonEncode({'ok': false, 'error': '$error'}),
+            );
+          }
+        } else {
+          request.response.statusCode = HttpStatus.notFound;
+        }
+        await request.response.close();
+      }
+    } catch (_) {}
   }
 
   @override
@@ -4857,17 +4906,28 @@ $instructions
     final session = _session;
     final current = avitoCatalogData;
     if (service == null || session == null || current == null) return current;
-    if ((current.fields[slug] ?? const []).isNotEmpty) return current;
+    bool needsSizes(List<AvitoField> fields) => fields.any(
+      (field) =>
+          field.tag == 'Size' &&
+          field.content.any(
+            (content) =>
+                content.fieldType == 'select' && content.values.isEmpty,
+          ),
+    );
+    final existing = current.fields[slug] ?? const <AvitoField>[];
+    if (existing.isNotEmpty && !needsSizes(existing)) return current;
     final cached = await _readAvitoCache('fields_$slug');
     if (cached is List) {
       final parsedCached = cached
           .whereType<Map>()
           .map((e) => AvitoField.fromJson(Map<String, dynamic>.from(e)))
           .toList();
-      final cachedResult = current.withFields(slug, parsedCached);
-      avitoCatalogData = cachedResult;
-      if (mounted) setState(() {});
-      return cachedResult;
+      if (!needsSizes(parsedCached)) {
+        final cachedResult = current.withFields(slug, parsedCached);
+        avitoCatalogData = cachedResult;
+        if (mounted) setState(() {});
+        return cachedResult;
+      }
     }
     final fieldStarted = DateTime.now();
     await _dbg('fields: start $slug');
@@ -4884,16 +4944,102 @@ $instructions
           .whereType<Map>()
           .map((e) => AvitoField.fromJson(Map<String, dynamic>.from(e)))
           .toList(growable: false);
-      final updated = current.withFields(slug, parsed);
+      final enriched = await _loadAvitoSizeOptions(parsed);
+      final updated = current.withFields(slug, enriched);
       avitoCatalogData = updated;
       await _writeAvitoCache(
         'fields_$slug',
-        parsed.map((f) => f.toJson()).toList(),
+        enriched.map((f) => f.toJson()).toList(),
       );
       if (mounted) setState(() {});
       return updated;
     } catch (_) {
       return current;
+    }
+  }
+
+  Future<List<AvitoField>> _loadAvitoSizeOptions(
+    List<AvitoField> fields,
+  ) async {
+    final missing = fields.where(
+      (field) =>
+          field.tag == 'Size' &&
+          field.content.any(
+            (content) =>
+                content.fieldType == 'select' &&
+                content.values.isEmpty &&
+                content.valuesLinkJson.isNotEmpty,
+          ),
+    );
+    if (missing.isEmpty) return fields;
+    try {
+      String? token = avitoAccessToken;
+      if (!_usesServerAvitoProxy) {
+        final credentials = await _avitoCredentials();
+        if (credentials.id.isEmpty || credentials.secret.isEmpty) {
+          if (token == null || token.isEmpty || token == 'server-managed') {
+            return fields;
+          }
+        } else {
+          final response = await http
+              .post(
+                Uri.https('api.avito.ru', '/token'),
+                body: {
+                  'grant_type': 'client_credentials',
+                  'client_id': credentials.id,
+                  'client_secret': credentials.secret,
+                },
+              )
+              .timeout(const Duration(seconds: 30));
+          if (response.statusCode != 200) return fields;
+          final body = jsonDecode(response.body);
+          token = body is Map ? body['access_token']?.toString() : null;
+          if (token == null || token.isEmpty) return fields;
+        }
+      }
+      final result = <AvitoField>[];
+      for (final field in fields) {
+        final contents = <AvitoFieldContent>[];
+        for (final content in field.content) {
+          var values = content.values;
+          final uri = Uri.tryParse(content.valuesLinkJson);
+          if (field.tag == 'Size' &&
+              content.fieldType == 'select' &&
+              values.isEmpty &&
+              uri != null &&
+              uri.scheme == 'https' &&
+              uri.host == 'api.avito.ru' &&
+              uri.path.startsWith('/autoload/v1/user-docs/node/')) {
+            final response = await _avitoGet(
+              uri,
+              headers: {'Authorization': 'Bearer ${token ?? ''}'},
+            );
+            if (response.statusCode == 200) {
+              dynamic decoded = jsonDecode(response.body);
+              if (decoded is Map && decoded['result'] is Map) {
+                decoded = decoded['result'];
+              }
+              if (decoded is Map) decoded = decoded['values'];
+              if (decoded is List) values = decoded;
+            }
+          }
+          contents.add(
+            AvitoFieldContent(
+              fieldType: content.fieldType,
+              dataType: content.dataType,
+              required: content.required,
+              values: values,
+              valuesLinkJson: content.valuesLinkJson,
+            ),
+          );
+        }
+        result.add(
+          AvitoField(tag: field.tag, label: field.label, content: contents),
+        );
+      }
+      return result;
+    } catch (_) {
+      return fields;
     }
   }
 
