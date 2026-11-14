@@ -1253,6 +1253,17 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 ? _applyAvitoOrderRows(rows)
                 : (added: 0, updated: 0);
             await _saveCrmData();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Заказы из Chrome обновлены: новых ${result.added}, '
+                    'обновлено ${result.updated}',
+                  ),
+                ),
+              );
+              setState(() {});
+            }
             request.response.headers.contentType = ContentType.json;
             request.response.write(
               jsonEncode({
