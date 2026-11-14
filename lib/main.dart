@@ -13970,6 +13970,9 @@ end tell
           }
         }
       }
+      if (article.isEmpty) {
+        article = _articleForTitle('${item['title'] ?? ''}');
+      }
 
       if (article.isEmpty) article = existing?.article ?? '';
       // Приоритет: полный штрихкод из карточки → номер из строки списка →
