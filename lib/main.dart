@@ -13692,10 +13692,21 @@ end tell
   }
 
   Future<void> _loadAvitoOrdersViaChrome() async {
-    if (!await launchUrl(
-      Uri.parse('https://www.avito.ru/orders?source=sidebar'),
-      mode: LaunchMode.externalApplication,
-    )) {
+    const url = 'https://www.avito.ru/orders?source=sidebar';
+    final opened = Platform.isMacOS
+        ? (await Process.run('open', ['-a', 'Google Chrome', url])).exitCode ==
+              0
+        : Platform.isWindows
+        ? (await Process.run('cmd', [
+                '/c',
+                'start',
+                '',
+                'chrome',
+                url,
+              ])).exitCode ==
+              0
+        : await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!opened) {
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Не удалось открыть Chrome')),
