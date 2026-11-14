@@ -13939,6 +13939,8 @@ end tell
       // Жёсткая связка с CRM: по ID объявления Авито, затем по названию.
       final itemId = '${item['itemId'] ?? ''}'.trim();
       var article = '';
+      final directArticle = '${item['article'] ?? ''}'.trim();
+      if (directArticle.isNotEmpty) article = directArticle;
       if (itemId.isNotEmpty) {
         for (final product in products) {
           if (product.avitoItemId == itemId) {

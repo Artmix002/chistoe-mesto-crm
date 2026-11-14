@@ -24,7 +24,7 @@
   };
   const orderMatch = location.pathname.match(/^\/orders\/(\d+)/);
   if (orderMatch) {
-    setTimeout(() => {
+    const scan = () => {
       const links = [...document.querySelectorAll('a[href]')]
         .map((a) => a.href)
         .filter((href) => href.includes('avito.ru') && !href.includes('/orders/') &&
@@ -33,10 +33,19 @@
         /https?:\/\/www\.avito\.ru\/[^"'<>\s]+(?:_\d{7,}|\/item\/\d{7,})[^"'<>\s]*/i,
       ) || [])[0] || '';
       const itemUrl = links.find((href) => /(?:\/item\/|_\d{7,}|\/\d{7,})/.test(href)) || embedded;
+      const source = `${document.body.innerText}\n${document.documentElement.innerHTML}`;
+      const article = (source.match(/(?:Артикул|арт\.?|SKU)[:\s№#-]*([A-Za-zА-Яа-я0-9_-]+)/i) || [])[1] || '';
       try {
-        if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl});
+        if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl, article});
       } catch (_) {}
-    }, 7000);
+    };
+    let attempts = 0;
+    const retry = () => {
+      attempts += 1;
+      scan();
+      if (attempts < 5) setTimeout(retry, 4000);
+    };
+    setTimeout(retry, 3000);
     return;
   }
   const extractDetails = () => {
