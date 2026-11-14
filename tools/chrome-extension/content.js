@@ -29,7 +29,10 @@
         .map((a) => a.href)
         .filter((href) => href.includes('avito.ru') && !href.includes('/orders/') &&
           !href.includes('/profile') && !href.includes('/help'));
-      const itemUrl = links.find((href) => /(?:\/item\/|_\d{7,}|\/\d{7,})/.test(href)) || '';
+      const embedded = (document.documentElement.innerHTML.match(
+        /https?:\/\/www\.avito\.ru\/[^"'<>\s]+(?:_\d{7,}|\/item\/\d{7,})[^"'<>\s]*/i,
+      ) || [])[0] || '';
+      const itemUrl = links.find((href) => /(?:\/item\/|_\d{7,}|\/\d{7,})/.test(href)) || embedded;
       try {
         if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl});
       } catch (_) {}
