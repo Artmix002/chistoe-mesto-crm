@@ -26,6 +26,16 @@
       article: article ? article[1].trim() : ''
     };
   };
+  const extractArticleFromAd = async () => {
+    const link = [...document.querySelectorAll('a[href*="/item/"]')][0];
+    if (!link) return '';
+    try {
+      const html = await fetch(link.href, {credentials: 'include'}).then((r) => r.text());
+      const adText = new DOMParser().parseFromString(html, 'text/html')?.body?.innerText || '';
+      const match = adText.match(/(?:Артикул|арт\.?|SKU)[:\s№#-]*([A-Za-zА-Яа-я0-9_-]+)/i);
+      return match ? match[1].trim() : '';
+    } catch (_) { return ''; }
+  };
   const send = (orders) => {
     try {
       if (chrome.runtime?.id) {
@@ -43,6 +53,7 @@
       link.click();
       await new Promise((resolve) => setTimeout(resolve, 1200));
       Object.assign(order, extractDetails());
+      if (!order.article) order.article = await extractArticleFromAd();
       history.back();
       await new Promise((resolve) => setTimeout(resolve, 900));
     }
