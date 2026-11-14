@@ -13691,6 +13691,25 @@ end tell
     return out;
   }
 
+  Future<void> _loadAvitoOrdersViaChrome() async {
+    if (!await launchUrl(
+      Uri.parse('https://www.avito.ru/orders?source=sidebar'),
+      mode: LaunchMode.externalApplication,
+    )) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть Chrome')),
+        );
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Chrome открыт. Расширение передаст заказы в CRM.'),
+      ),
+    );
+  }
+
   Future<void> _loadAvitoOrdersViaSafari() async {
     if (!Platform.isMacOS) return;
     BuildContext? progress;
@@ -13707,7 +13726,7 @@ end tell
               children: [
                 CircularProgressIndicator(),
                 SizedBox(width: 16),
-                Text('Читаю заказы в Safari…'),
+                Text('Читаю заказы в Chrome…'),
               ],
             ),
           );
@@ -13793,7 +13812,7 @@ end tell
       }
       ordersAvitoSyncedAt = DateTime.now().millisecondsSinceEpoch;
       await _saveCrmData();
-      _enqueueCloudSnapshot('Заказ', 'Заказы из Авито (Safari)');
+      _enqueueCloudSnapshot('Заказ', 'Заказы из Авито (Chrome)');
       if (progress != null && progress!.mounted) {
         Navigator.of(progress!).pop();
       }
@@ -13814,7 +13833,7 @@ end tell
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Не удалось прочитать заказы в Safari: ${CrmLogger.redact(error.toString())}',
+              'Не удалось прочитать заказы в Chrome: ${CrmLogger.redact(error.toString())}',
             ),
           ),
         );
@@ -13953,7 +13972,7 @@ end tell
     final clientId = await secretStore.read('avito_client_id') ?? '';
     final clientSecret = await secretStore.read('avito_client_secret') ?? '';
     if (clientId.isEmpty || clientSecret.isEmpty) {
-      await _loadAvitoOrdersViaSafari();
+      await _loadAvitoOrdersViaChrome();
       return;
     }
     BuildContext? progress;
@@ -14130,7 +14149,7 @@ end tell
       }
       final message = CrmLogger.redact(error.toString());
       if (message.contains('Авито Доставкой') || message.contains('403')) {
-        await _loadAvitoOrdersViaSafari();
+        await _loadAvitoOrdersViaChrome();
         return;
       }
       if (mounted) {
