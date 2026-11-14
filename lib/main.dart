@@ -13973,6 +13973,30 @@ end tell
       if (article.isEmpty) {
         article = _articleForTitle('${item['title'] ?? ''}');
       }
+      if (article.isEmpty) {
+        final target = _normalizeOrderTitle('${item['title'] ?? ''}');
+        final candidates = products
+            .where(
+              (product) =>
+                  _normalizeOrderTitle(product.name) == target &&
+                  product.marketplacePrice > 0,
+            )
+            .toList();
+        if (candidates.length == 1) {
+          article = candidates.single.sku;
+        } else if (candidates.length > 1 && amount > 0) {
+          candidates.sort(
+            (a, b) => (a.marketplacePrice - amount).abs().compareTo(
+              (b.marketplacePrice - amount).abs(),
+            ),
+          );
+          final best = (candidates.first.marketplacePrice - amount).abs();
+          final tied = candidates
+              .where((p) => (p.marketplacePrice - amount).abs() == best)
+              .length;
+          if (tied == 1) article = candidates.first.sku;
+        }
+      }
 
       if (article.isEmpty) article = existing?.article ?? '';
       // Приоритет: полный штрихкод из карточки → номер из строки списка →
