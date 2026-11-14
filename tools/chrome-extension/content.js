@@ -17,10 +17,31 @@
       }).filter(Boolean);
     return [...new Map(rows.map((row) => [row.id, row])).values()];
   };
-  const send = () => {
-    const orders = collect();
+  const extractDetails = () => {
+    const body = text(document.body);
+    const number = body.match(/(?:Назовите номер заказа|номер заказа|этот номер)[:\s№]*([\d\s]{6,})/i);
+    const article = body.match(/(?:Артикул|арт\.?|SKU)[:\s№#-]*([A-Za-zА-Яа-я0-9_-]+)/i);
+    return {
+      barcode: number ? number[1].replace(/\s+/g, '') : '',
+      article: article ? article[1].trim() : ''
+    };
+  };
+  const send = (orders) => {
     chrome.runtime.sendMessage({type: 'orders', orders, url: location.href});
   };
-  send();
-  new MutationObserver(() => send()).observe(document.body, {childList: true, subtree: true});
+  const enrich = async () => {
+    const orders = collect();
+    for (const order of orders) {
+      const link = [...document.querySelectorAll('a[href^="/orders/"]')]
+        .find((a) => a.getAttribute('href')?.includes(`/orders/${order.id}`));
+      if (!link) continue;
+      link.click();
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      Object.assign(order, extractDetails());
+      history.back();
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+    send(orders);
+  };
+  enrich();
 })();
