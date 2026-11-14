@@ -27,7 +27,12 @@
     };
   };
   const send = (orders) => {
-    chrome.runtime.sendMessage({type: 'orders', orders, url: location.href});
+    try {
+      if (chrome.runtime?.id) {
+        chrome.runtime.sendMessage({type: 'orders', orders, url: location.href})
+          .catch(() => {});
+      }
+    } catch (_) {}
   };
   const enrich = async () => {
     const orders = collect();
