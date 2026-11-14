@@ -13959,8 +13959,11 @@ end tell
             .replaceFirst(RegExp(r'/$'), '');
         final target = normalize(itemUrl);
         if (target.isNotEmpty) {
+          final idMatch = RegExp(r'(?:_|/item/)(\d{7,})').firstMatch(target);
+          final listingId = idMatch?.group(1) ?? '';
           for (final product in products) {
-            if (normalize(product.marketplaceUrl) == target) {
+            if (normalize(product.marketplaceUrl) == target ||
+                (listingId.isNotEmpty && product.avitoItemId == listingId)) {
               article = product.sku;
               break;
             }

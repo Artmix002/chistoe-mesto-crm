@@ -9,12 +9,15 @@
         const match = href.match(/\/orders\/(\d+)/);
         const image = row.querySelector('img');
         const itemLink = row.querySelector('a[href*="/item/"], a[href*="_"]');
+        const htmlUrl = (row.outerHTML.match(/https?:\/\/[^"'\s<>]*avito\.ru[^"'\s<>]*/i) || [])[0] ||
+          (row.outerHTML.match(/(?:href|data-url|data-href)=["']([^"']*(?:\/item\/|_\d{7,})[^"']*)/i) || [])[1] || '';
         return match ? {
           id: match[1],
           url: new URL(href, location.origin).href,
           text: text(row),
           title: image?.alt || '',
-          itemUrl: itemLink ? new URL(itemLink.getAttribute('href'), location.origin).href : ''
+          itemUrl: itemLink ? new URL(itemLink.getAttribute('href'), location.origin).href :
+            (htmlUrl ? new URL(htmlUrl, location.origin).href : '')
         } : null;
       }).filter(Boolean);
     return [...new Map(rows.map((row) => [row.id, row])).values()];
