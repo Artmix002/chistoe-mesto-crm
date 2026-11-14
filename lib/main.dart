@@ -13945,6 +13945,26 @@ end tell
           }
         }
       }
+      if (article.isEmpty) {
+        final itemUrl = '${item['itemUrl'] ?? ''}'.trim();
+        String normalize(String value) => value
+            .toLowerCase()
+            .replaceFirst(RegExp(r'^https?://'), '')
+            .split('?')
+            .first
+            .split('#')
+            .first
+            .replaceFirst(RegExp(r'/$'), '');
+        final target = normalize(itemUrl);
+        if (target.isNotEmpty) {
+          for (final product in products) {
+            if (normalize(product.marketplaceUrl) == target) {
+              article = product.sku;
+              break;
+            }
+          }
+        }
+      }
 
       if (article.isEmpty) article = existing?.article ?? '';
       // Приоритет: полный штрихкод из карточки → номер из строки списка →

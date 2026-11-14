@@ -8,11 +8,13 @@
         const href = link?.getAttribute('href') || '';
         const match = href.match(/\/orders\/(\d+)/);
         const image = row.querySelector('img');
+        const itemLink = row.querySelector('a[href*="/item/"], a[href*="_"]');
         return match ? {
           id: match[1],
           url: new URL(href, location.origin).href,
           text: text(row),
-          title: image?.alt || ''
+          title: image?.alt || '',
+          itemUrl: itemLink ? new URL(itemLink.getAttribute('href'), location.origin).href : ''
         } : null;
       }).filter(Boolean);
     return [...new Map(rows.map((row) => [row.id, row])).values()];
@@ -46,17 +48,6 @@
   };
   const enrich = async () => {
     const orders = collect();
-    for (const order of orders) {
-      const link = [...document.querySelectorAll('a[href^="/orders/"]')]
-        .find((a) => a.getAttribute('href')?.includes(`/orders/${order.id}`));
-      if (!link) continue;
-      link.click();
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      Object.assign(order, extractDetails());
-      if (!order.article) order.article = await extractArticleFromAd();
-      history.back();
-      await new Promise((resolve) => setTimeout(resolve, 900));
-    }
     send(orders);
   };
   enrich();
