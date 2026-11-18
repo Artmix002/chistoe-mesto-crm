@@ -104,24 +104,36 @@
       }
       // Avito adds logos, badges and recommendations to the page as ordinary
       // images. Only the item gallery contains the listing's own photographs.
-      const galleryFrames = [...document.querySelectorAll(
-        '[data-marker="image-frame/image"], ' +
-        '[data-marker="image-preview/preview-image"]',
-      )];
-      const galleryImages = galleryFrames.flatMap((frame) =>
-        frame instanceof HTMLImageElement ? [frame] : [...frame.querySelectorAll('img')],
-      );
-      const imageUrls = galleryImages
-        .flatMap((image) => {
-          const srcset = image.getAttribute('srcset') || '';
-          const best = srcset.split(',').map((item) => item.trim().split(/\s+/)[0]).filter(Boolean).at(-1);
-          return [best, image.currentSrc, image.src];
-        })
-        .filter((url) =>
-          /^https?:\/\//.test(url) &&
-          /(?:avito\.st|avito\.ru).*(?:^|[./])image(?:[/?]|$)/i.test(url),
-        );
-      const photos = [...new Set(imageUrls)].slice(0, 10);
+      const bestImageUrl = (image) => {
+        if (!image) return '';
+        const srcset = image.getAttribute('srcset') || '';
+        const best = srcset.split(',').map((item) => item.trim().split(/\s+/)[0]).filter(Boolean).at(-1);
+        return [best, image.currentSrc, image.src].find((url) =>
+          /^https?:\/\//.test(url || '') &&
+          /(?:avito\.st|avito\.ru).*(?:^|[./])image(?:[/?]|$)/i.test(url || ''),
+        ) || '';
+      };
+      const mainImage = () => document.querySelector('[data-marker="image-frame/image"]');
+      const previews = [...document.querySelectorAll('[data-marker="image-preview/preview-image"]')];
+      const photos = [];
+      if (previews.length) {
+        for (const preview of previews.slice(0, 10)) {
+          const previous = bestImageUrl(mainImage());
+          (preview.closest('button, a, [role="button"]') || preview).click();
+          for (let attempt = 0; attempt < 12; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            const current = bestImageUrl(mainImage());
+            if (current && (current !== previous || attempt === 11)) {
+              photos.push(current);
+              break;
+            }
+          }
+        }
+      } else {
+        const current = bestImageUrl(mainImage());
+        if (current) photos.push(current);
+      }
+      const uniquePhotos = [...new Set(photos)];
       const article = (
         descriptionText.match(/(?:артикул|арт\.?|sku)\s*[:№#-]?\s*([a-zа-я0-9_-]{3,})/i) ||
         []
@@ -140,7 +152,7 @@
             category,
             attributes,
             article,
-            photos,
+            photos: uniquePhotos,
           }),
         });
       } catch (_) {}
