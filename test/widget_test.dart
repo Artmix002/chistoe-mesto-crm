@@ -722,8 +722,7 @@ void main() {
         ],
       },
     });
-    final body =
-        jsonDecode(client.sentBody! as String) as Map<String, dynamic>;
+    final body = jsonDecode(client.sentBody! as String) as Map<String, dynamic>;
     expect(body['operation'], 'importSheets');
     expect(body['sessionToken'], 'test-token');
     expect((body['sheets'] as Map)['Август']['area'], 'deals');
@@ -1373,19 +1372,22 @@ void main() {
     expect(queue.items.single.payload['name'], 'Новое имя');
   });
 
-  test('queue generation invalidates a cloud read even after sync drains it', () {
-    final queue = SyncQueue();
-    final startedAt = queue.localGeneration;
-    expect(queue.isUnchangedAndEmptySince(startedAt), isTrue);
+  test(
+    'queue generation invalidates a cloud read even after sync drains it',
+    () {
+      final queue = SyncQueue();
+      final startedAt = queue.localGeneration;
+      expect(queue.isUnchangedAndEmptySince(startedAt), isTrue);
 
-    queue.enqueue(entity: 'Клиент', details: 'изменён');
-    final sentId = queue.items.single.id;
-    expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
-    queue.removeAccepted([sentId]);
-    expect(queue.items, isEmpty);
-    expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
-    expect(queue.isUnchangedAndEmptySince(queue.localGeneration), isTrue);
-  });
+      queue.enqueue(entity: 'Клиент', details: 'изменён');
+      final sentId = queue.items.single.id;
+      expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
+      queue.removeAccepted([sentId]);
+      expect(queue.items, isEmpty);
+      expect(queue.isUnchangedAndEmptySince(startedAt), isFalse);
+      expect(queue.isUnchangedAndEmptySince(queue.localGeneration), isTrue);
+    },
+  );
 
   test('queue generation changes when a duplicate snapshot is updated', () {
     final queue = SyncQueue();
@@ -1434,7 +1436,8 @@ void main() {
     expect(restored.hasRetryableItems(DateTime.now()), isTrue);
   });
 
-  test('sync queue retains rejected changes and removes only confirmations',
+  test(
+    'sync queue retains rejected changes and removes only confirmations',
     () {
       final queue = SyncQueue();
       queue.enqueue(entity: 'Клиент', details: 'создан');
@@ -3364,6 +3367,7 @@ https://crm.example.com/sync?syncToken=query-secret''';
                 onCategoryChanged: (_) {},
                 onManageCategories: () async {},
                 sheetError: 'Нет сети',
+                intelligenceDashboard: const Text('Финансовый обзор'),
                 hasRows: false,
                 table: null,
                 localOperations: const Text('Локальные операции'),

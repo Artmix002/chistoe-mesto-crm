@@ -16,6 +16,7 @@ class OrdersView extends StatefulWidget {
     required this.onDelete,
     required this.onChanged,
     this.onLinkProduct,
+    this.onShowLabels,
     this.productUrlFor,
   });
 
@@ -28,6 +29,7 @@ class OrdersView extends StatefulWidget {
   final Future<void> Function(Order order) onDelete;
   final VoidCallback onChanged;
   final Future<void> Function(Order order)? onLinkProduct;
+  final Future<void> Function(List<Order> orders, String title)? onShowLabels;
 
   /// Ссылка на объявление товара, связанного с заказом (если есть).
   final String Function(Order order)? productUrlFor;
@@ -72,7 +74,8 @@ class _OrdersViewState extends State<OrdersView> {
   };
 
   String _statusLabel(Order order) {
-    if (order.avitoStatus.isNotEmpty) return order.avitoStatus;
+    final status = _deliveryInstruction(order);
+    if (status.isNotEmpty) return status;
     return switch (order.status) {
       'paid' => 'Оплачен',
       'shipped' => 'Отправлен',
@@ -81,6 +84,19 @@ class _OrdersViewState extends State<OrdersView> {
       'canceled' => 'Отменён',
       _ => 'Новый',
     };
+  }
+
+  /// Chrome can receive one visually flattened line from Avito. Keep the
+  /// instruction separate from amounts, carrier and tracking data so cards
+  /// remain scannable even for those older records.
+  String _deliveryInstruction(Order order) {
+    final value = order.avitoStatus.trim();
+    if (value.isEmpty) return '';
+    final match = RegExp(
+      r'^(.*?)(?=\s+До\s+\d|\s+\d[\d\s\u00a0]*₽|\s+(?:Почта России|СДЭК|Яндекс Доставка|Boxberry|Авито)\b)',
+      caseSensitive: false,
+    ).firstMatch(value);
+    return (match?.group(1) ?? value).trim();
   }
 
   bool _requiresAction(Order order) {
@@ -309,6 +325,25 @@ class _OrdersViewState extends State<OrdersView> {
                 ),
                 icon: const Icon(Icons.cloud_download_outlined),
                 label: const Text('Загрузить из Авито'),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                onPressed: widget.onShowLabels == null || _activeCount == 0
+                    ? null
+                    : () => widget.onShowLabels!(
+                        widget.orders.where(_isActive).toList(),
+                        'Этикетки активных заказов',
+                      ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Color(0x66FFFFFF)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                ),
+                icon: const Icon(Icons.print_outlined),
+                label: Text('Этикетки ($_activeCount)'),
               ),
               const SizedBox(width: 10),
               FilledButton.icon(
@@ -550,7 +585,7 @@ class _OrdersViewState extends State<OrdersView> {
             children: [
               Container(
                 width: 4,
-                height: 74,
+                height: 132,
                 decoration: BoxDecoration(
                   color: color,
                   borderRadius: BorderRadius.circular(4),
@@ -610,37 +645,26 @@ class _OrdersViewState extends State<OrdersView> {
                       spacing: 12,
                       runSpacing: 4,
                       children: [
-                        if (order.article.isNotEmpty)
-                          if (order.article.isNotEmpty)
-                            InkWell(
-                              borderRadius: BorderRadius.circular(6),
-                              onTap: widget.onLinkProduct == null
-                                  ? null
-                                  : () async {
-                                      await widget.onLinkProduct!(order);
-                                      if (mounted) setState(() {});
-                                    },
-                              child: _meta(
-                                Icons.qr_code_2,
-                                'арт. ${order.article}',
-                                muted,
-                              ),
-                            )
-                          else
-                            InkWell(
-                              borderRadius: BorderRadius.circular(6),
-                              onTap: widget.onLinkProduct == null
-                                  ? null
-                                  : () async {
-                                      await widget.onLinkProduct!(order);
-                                      if (mounted) setState(() {});
-                                    },
-                              child: _meta(
-                                Icons.link_off,
-                                'не связан — связать',
-                                const Color(0xFFB45309),
-                              ),
-                            ),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: widget.onLinkProduct == null
+                              ? null
+                              : () async {
+                                  await widget.onLinkProduct!(order);
+                                  if (mounted) setState(() {});
+                                },
+                          child: _meta(
+                            order.article.isEmpty
+                                ? Icons.link_off
+                                : Icons.qr_code_2,
+                            order.article.isEmpty
+                                ? 'не связан — выбрать товар'
+                                : 'арт. ${order.article}',
+                            order.article.isEmpty
+                                ? const Color(0xFFB45309)
+                                : muted,
+                          ),
+                        ),
                         if (order.customer.isNotEmpty)
                           _meta(Icons.person_outline, order.customer, muted),
                         if (order.phone.isNotEmpty)
@@ -651,8 +675,18 @@ class _OrdersViewState extends State<OrdersView> {
                           muted,
                         ),
                         _meta(Icons.event_outlined, order.date, muted),
+                        if (order.stockWrittenOff)
+                          _meta(
+                            Icons.check_circle_outline,
+                            'продажа проведена',
+                            const Color(0xFF15803D),
+                          ),
                       ],
                     ),
+                    if (order.pvz.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      _meta(Icons.place_outlined, 'ПВЗ: ${order.pvz}', muted),
+                    ],
                     if (order.avitoStatus.isNotEmpty ||
                         order.barcode.isNotEmpty ||
                         order.pvz.isNotEmpty) ...[
@@ -664,20 +698,17 @@ class _OrdersViewState extends State<OrdersView> {
                           if (order.avitoStatus.isNotEmpty)
                             _meta(
                               Icons.local_shipping_outlined,
-                              [
-                                order.avitoStatus,
-                                if (order.avitoDeadline.isNotEmpty)
-                                  order.avitoDeadline.replaceFirst(
-                                    'До ',
-                                    'до ',
-                                  ),
-                              ].join(' '),
+                              _deliveryInstruction(order),
+                              const Color(0xFFB45309),
+                            ),
+                          if (order.avitoDeadline.isNotEmpty)
+                            _meta(
+                              Icons.schedule_outlined,
+                              order.avitoDeadline,
                               const Color(0xFFB45309),
                             ),
                           if (order.barcode.isNotEmpty)
                             _barcodeChip(order.barcode),
-                          if (order.pvz.isNotEmpty)
-                            _meta(Icons.place_outlined, order.pvz, muted),
                           if ((widget.productUrlFor?.call(order) ?? '')
                               .isNotEmpty)
                             InkWell(
@@ -713,6 +744,16 @@ class _OrdersViewState extends State<OrdersView> {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        tooltip: 'Этикетка 58x40 мм',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: widget.onShowLabels == null
+                            ? null
+                            : () => widget.onShowLabels!([
+                                order,
+                              ], 'Этикетка заказа №${order.number}'),
+                        icon: const Icon(Icons.print_outlined, size: 18),
+                      ),
                       IconButton(
                         tooltip: 'Изменить',
                         visualDensity: VisualDensity.compact,

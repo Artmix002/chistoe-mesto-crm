@@ -99,6 +99,8 @@ class _ProductEditorScreenState extends State<ProductEditorScreen> {
     'Description',
     'Images',
     'Image',
+    'ImageUrls',
+    'ImageNames',
     'Category',
     'Price',
     'Address',
@@ -136,6 +138,16 @@ class _ProductEditorScreenState extends State<ProductEditorScreen> {
     for (final entry in p.attributes.entries) {
       if (entry.key == 'avito_slug') continue;
       params[entry.key] = TextEditingController(text: entry.value);
+    }
+    if (categorySlug != null && widget.onLoadFields != null) {
+      unawaited(_loadInitialCategoryFields(categorySlug!));
+    }
+  }
+
+  Future<void> _loadInitialCategoryFields(String slug) async {
+    final loaded = await widget.onLoadFields!(slug);
+    if (mounted && categorySlug == slug && loaded != null) {
+      setState(() => catalog = loaded);
     }
   }
 
@@ -1148,6 +1160,20 @@ class _ProductEditorScreenState extends State<ProductEditorScreen> {
             if (value == null) return;
             setState(() => controller.text = value);
           },
+        ),
+      );
+    }
+    if (field.tag == 'Size' && isSelect) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(
+          controller: controller,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: label,
+            helperText:
+                'Список Авито недоступен. Проверьте подключение к Авито.',
+          ),
         ),
       );
     }

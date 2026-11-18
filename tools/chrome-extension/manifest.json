@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Чистое место CRM — Заказы Авито",
-  "version": "1.0.0",
+  "version": "1.9.3",
   "description": "Передаёт заказы Авито в локальную CRM.",
-  "permissions": ["tabs", "storage"],
+  "permissions": ["tabs", "storage", "scripting", "webNavigation", "debugger"],
   "host_permissions": ["https://www.avito.ru/*", "http://127.0.0.1/*", "http://localhost/*"],
   "background": {"service_worker": "background.js"},
   "content_scripts": [{
-    "matches": ["https://www.avito.ru/orders*", "https://www.avito.ru/profile/orders*"],
+    "matches": ["https://www.avito.ru/*"],
     "js": ["content.js"],
     "run_at": "document_idle"
   }],

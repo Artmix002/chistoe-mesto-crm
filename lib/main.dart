@@ -56,6 +56,7 @@ import 'widgets/client_detail_dialog.dart';
 import 'widgets/settings_page.dart';
 import 'widgets/quick_replies_dialog.dart';
 import 'widgets/accounting_page.dart';
+import 'widgets/finance_intelligence_dashboard.dart';
 import 'widgets/accounting_table.dart';
 import 'widgets/accounting_categories_dialog.dart';
 import 'widgets/local_operations_list.dart';
@@ -66,6 +67,7 @@ import 'products_excel.dart';
 import 'avito_sync_script.dart';
 import 'avito_import.dart';
 import 'widgets/orders_view.dart';
+import 'order_labels.dart';
 import 'widgets/deals_kanban_board.dart';
 import 'widgets/deals_grouped_table.dart';
 import 'widgets/client_results_list.dart';
@@ -293,6 +295,7 @@ class _CleanPlaceAppState extends State<CleanPlaceApp> {
           backgroundColor: darkMode
               ? const Color(0xFF2C2C2E)
               : const Color(0xFF1C1C1E),
+          contentTextStyle: const TextStyle(color: Colors.white),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -1244,7 +1247,25 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           await request.response.close();
           continue;
         }
-        if (request.method == 'POST' && request.uri.path == '/avito/orders') {
+        if (request.method == 'GET' &&
+            request.uri.path == '/avito/orders/closed') {
+          // This is a snapshot taken before Chrome starts opening cards. Only
+          // terminal Avito orders can be skipped safely on the current run.
+          final closedNumbers = orders
+              .where(
+                (order) =>
+                    order.source == 'avito' &&
+                    (order.status == 'done' || order.status == 'canceled'),
+              )
+              .map((order) => '${order.number}')
+              .toSet()
+              .toList();
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(
+            jsonEncode({'closedOrderNumbers': closedNumbers}),
+          );
+        } else if (request.method == 'POST' &&
+            request.uri.path == '/avito/orders') {
           try {
             final body = await utf8.decoder.bind(request).join();
             final data = jsonDecode(body);
@@ -1252,6 +1273,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             final result = rows is List
                 ? _applyAvitoOrderRows(rows)
                 : (added: 0, updated: 0);
+            if (rows is List) {
+              ordersAvitoSyncedAt = DateTime.now().millisecondsSinceEpoch;
+            }
             await _saveCrmData();
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -13518,66 +13542,6 @@ $instructions
     _ => 'new',
   };
 
-  String _normalizeOrderTitle(String value) =>
-      value.toLowerCase().replaceAll(RegExp(r'[^a-zа-я0-9]+'), '');
-
-  static const _orderLinkPrefsKey = 'crm_order_title_sku';
-
-  /// Сопоставляет заказ с товаром CRM: по сохранённой привязке, затем по
-  /// названию; при неоднозначности выбирает ближайший по цене.
-  Product? _matchProductForOrder(String title, double amount) {
-    final target = _normalizeOrderTitle(title);
-    if (target.isEmpty) return null;
-    try {
-      final raw = prefs.getString(_orderLinkPrefsKey);
-      if (raw != null && raw.isNotEmpty) {
-        final map = jsonDecode(raw);
-        if (map is Map) {
-          final sku = '${map[target] ?? ''}'.trim();
-          if (sku.isNotEmpty) {
-            for (final product in products) {
-              if (product.sku == sku) return product;
-            }
-          }
-        }
-      }
-    } catch (_) {}
-    final exact = products
-        .where((p) => _normalizeOrderTitle(p.name) == target)
-        .toList();
-    final candidates = exact.isNotEmpty
-        ? exact
-        : products.where((p) {
-            final name = _normalizeOrderTitle(p.name);
-            return name.isNotEmpty &&
-                (target.contains(name) || name.contains(target));
-          }).toList();
-    if (candidates.isEmpty) return null;
-    if (candidates.length == 1) return candidates.first;
-    return null; // Не назначаем товар при неоднозначном совпадении.
-  }
-
-  /// Запоминает подтверждённую пользователем связь «название заказа → SKU».
-  Future<void> _rememberOrderLink(String title, String sku) async {
-    final target = _normalizeOrderTitle(title);
-    if (target.isEmpty) return;
-    try {
-      final raw = prefs.getString(_orderLinkPrefsKey);
-      final map = raw == null || raw.isEmpty
-          ? <String, dynamic>{}
-          : jsonDecode(raw);
-      if (map is Map) {
-        final updated = Map<String, dynamic>.from(map);
-        if (sku.isEmpty) {
-          updated.remove(target);
-        } else {
-          updated[target] = sku;
-        }
-        await prefs.setString(_orderLinkPrefsKey, jsonEncode(updated));
-      }
-    } catch (_) {}
-  }
-
   Future<Map<String, String>> _avitoOrderExtra(String id) async {
     const js =
         r'''(()=>{const b=document.body.innerText;const m=b.match(/Назовите номер заказа:\s*([\d\s]+)/);const lines=b.split('\n').map(s=>s.trim());let pvz='';for(const line of lines){if(/^г\s.+,\s*ул/i.test(line)){pvz=line;break;}}return JSON.stringify({barcode:m?m[1].replace(/\s+/g,''):'',pvz})})()''';
@@ -13686,6 +13650,7 @@ end tell
 
   Future<void> _loadAvitoOrdersViaChrome() async {
     const url = 'https://www.avito.ru/orders?source=sidebar';
+    final syncedBefore = ordersAvitoSyncedAt;
     final opened = Platform.isMacOS
         ? (await Process.run('open', ['-a', 'Google Chrome', url])).exitCode ==
               0
@@ -13707,9 +13672,44 @@ end tell
       return;
     }
     if (!mounted) return;
+    BuildContext? progress;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          progress = ctx;
+          return const AlertDialog(
+            title: Text('Заказы Авито'),
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Text('Открываю карточки товаров…'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    var completed = false;
+    for (var attempt = 0; attempt < 300; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (ordersAvitoSyncedAt > syncedBefore) {
+        completed = true;
+        break;
+      }
+    }
+    if (progress != null && progress!.mounted) Navigator.of(progress!).pop();
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Chrome открыт. Расширение передаст заказы в CRM.'),
+      SnackBar(
+        content: Text(
+          completed
+              ? 'Заказы обновлены. Артикулы сверены по карточкам объявлений.'
+              : 'Chrome не завершил обновление за 2,5 минуты. Проверьте расширение.',
+        ),
       ),
     );
   }
@@ -13798,10 +13798,11 @@ end tell
                       itemIds.contains(p.avitoItemId) &&
                       p.sku.trim().isNotEmpty,
                 )
-                .map((p) => p.sku.trim())
-                .toSet();
-            if (matches.length == 1 && order.article.isEmpty) {
-              order.article = matches.single;
+                .toList();
+            if (matches.length == 1) {
+              order
+                ..article = matches.single.sku.trim()
+                ..productId = matches.single.id;
             }
             if ('${entry.value['barcode'] ?? ''}'.isNotEmpty) {
               order.barcode = '${entry.value['barcode']}';
@@ -13809,6 +13810,7 @@ end tell
             if ('${entry.value['pvz'] ?? ''}'.isNotEmpty) {
               order.pvz = '${entry.value['pvz']}';
             }
+            _applyOrderSaleIfCompleted(order);
           }
         }
       } catch (error) {
@@ -13866,7 +13868,13 @@ end tell
           .map((e) => e.trim())
           .where((e) => e.isNotEmpty)
           .toList();
-      final statusText = parts.isEmpty ? '' : parts.first;
+      final flattenedStatus = RegExp(
+        r'^(.*?)(?=\s+До\s+\d|\s+\d[\d\s\u00a0]*₽|\s+(?:Почта России|СДЭК|Яндекс Доставка|Boxberry|Авито)\b)',
+        caseSensitive: false,
+      ).firstMatch(text)?.group(1)?.trim();
+      final statusText = parts.length > 1
+          ? parts.first
+          : (flattenedStatus?.isNotEmpty == true ? flattenedStatus! : text);
       final deadlineRaw = parts.firstWhere(
         (p) => p.startsWith('До ') || p.contains('срок доставки'),
         orElse: () => '',
@@ -13886,13 +13894,17 @@ end tell
         'DHL',
         'Авито',
       ];
-      final service = services.firstWhere(
+      final listService = services.firstWhere(
         (s) => parts.contains(s) || text.contains(s),
         orElse: () => '',
       );
+      final extractedService = '${item['shippingService'] ?? ''}'.trim();
+      final service = extractedService.isNotEmpty
+          ? extractedService
+          : listService;
       // Номер для отправки (штрихкод) идёт в строке сразу после службы.
       var shippingCode = '';
-      final serviceIndex = parts.indexOf(service);
+      final serviceIndex = parts.indexOf(listService);
       if (serviceIndex >= 0 && serviceIndex + 1 < parts.length) {
         final candidate = parts[serviceIndex + 1].trim();
         final cleaned = candidate.replaceAll(RegExp(r'[\s\u00a0]'), '');
@@ -13916,14 +13928,16 @@ end tell
       final id = 'avito-$avitoId';
       final existingIndex = orders.indexWhere((o) => o.id == id);
       final existing = existingIndex >= 0 ? orders[existingIndex] : null;
-      // Жёсткая связка с CRM: по ID объявления Авито, затем по названию.
+      // Жёсткая связка с CRM: только по URL (или его ID), полученному при
+      // открытии товара из конкретного заказа Авито. Название и описание
+      // объявления сознательно не участвуют в подборе.
       final itemId = '${item['itemId'] ?? ''}'.trim();
+      Product? linkedProduct;
       var article = '';
-      final directArticle = '${item['article'] ?? ''}'.trim();
-      if (directArticle.isNotEmpty) article = directArticle;
       if (itemId.isNotEmpty) {
         for (final product in products) {
           if (product.avitoItemId == itemId) {
+            linkedProduct = product;
             article = product.sku;
             break;
           }
@@ -13946,13 +13960,23 @@ end tell
           for (final product in products) {
             if (normalize(product.marketplaceUrl) == target ||
                 (listingId.isNotEmpty && product.avitoItemId == listingId)) {
+              linkedProduct = product;
               article = product.sku;
               break;
             }
           }
         }
       }
-      if (article.isEmpty) article = existing?.article ?? '';
+      // Chrome may report an order before its linked item page finishes
+      // opening. A partial refresh must never erase an article that was
+      // already resolved from a listing ID during an earlier pass.
+      if (article.isEmpty && existing != null) {
+        article = existing.article;
+      }
+      linkedProduct ??= products.cast<Product?>().firstWhere(
+        (product) => product?.id == existing?.productId,
+        orElse: () => null,
+      );
       // Приоритет: полный штрихкод из карточки → номер из строки списка →
       // то, что уже сохранено в CRM.
       final serverBarcode = '${item['barcode'] ?? ''}'.trim();
@@ -13970,6 +13994,7 @@ end tell
         date: today,
         product: '${item['title'] ?? ''}',
         article: article,
+        productId: linkedProduct?.id ?? existing?.productId ?? '',
         barcode: barcode,
         pvz: pvz,
         quantity: 1,
@@ -13979,8 +14004,12 @@ end tell
         comment: [statusText, if (service.isNotEmpty) service].join(' · '),
         avitoStatus: statusText,
         avitoDeadline: deadline,
+        stockWrittenOff: existing?.stockWrittenOff ?? false,
+        stockWriteOffAt: existing?.stockWriteOffAt ?? 0,
+        saleProductId: existing?.saleProductId ?? '',
         updatedAt: now.millisecondsSinceEpoch,
       );
+      _applyOrderSaleIfCompleted(order);
       if (existingIndex >= 0) {
         orders[existingIndex] = order;
         updated++;
@@ -13989,7 +14018,111 @@ end tell
         added++;
       }
     }
+    // Historical imports could leave more than one local record for the same
+    // Avito order. Keep one, preferring a resolved article over an empty copy.
+    final uniqueOrders = <String, Order>{};
+    for (final order in orders) {
+      final saved = uniqueOrders[order.id];
+      if (saved == null ||
+          (saved.article.isEmpty && order.article.isNotEmpty) ||
+          (saved.article.isEmpty == order.article.isEmpty &&
+              order.updatedAt > saved.updatedAt)) {
+        uniqueOrders[order.id] = order;
+      }
+    }
+    if (uniqueOrders.length != orders.length) {
+      orders
+        ..clear()
+        ..addAll(uniqueOrders.values);
+    }
     return (added: added, updated: updated);
+  }
+
+  /// Applies an Avito Delivery completion through the same product-sale model
+  /// used by the products screen. The persisted flag makes this idempotent:
+  /// later Chrome refreshes, returns, or duplicated payloads cannot write off
+  /// the same order twice.
+  void _applyOrderSaleIfCompleted(Order order) {
+    if (order.source != 'avito' ||
+        order.status != 'done' ||
+        order.stockWrittenOff) {
+      return;
+    }
+    Product? product = products.cast<Product?>().firstWhere(
+      (item) => item?.id == order.productId,
+      orElse: () => null,
+    );
+    // Older orders did not store productId. A single exact SKU is safe as a
+    // one-time migration; titles and fuzzy matches are intentionally excluded.
+    if (product == null && order.article.trim().isNotEmpty) {
+      final matches = products
+          .where((item) => item.sku.trim() == order.article.trim())
+          .toList();
+      if (matches.length == 1) product = matches.single;
+    }
+    final quantity = order.quantity;
+    if (product == null || quantity <= 0 || quantity > product.quantity) return;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final salePrice = quantity == 0 ? 0.0 : order.amount / quantity;
+    String saleProductId;
+    if (quantity >= product.quantity) {
+      product.recordStatusEvent('sold', product.quantity);
+      product
+        ..status = 'sold'
+        ..sold = true
+        ..soldAt = now
+        ..salePrice = salePrice
+        ..updatedAt = now;
+      saleProductId = product.id;
+    } else {
+      final soldPart = Product(
+        id: 'product-${DateTime.now().microsecondsSinceEpoch}',
+        name: product.name,
+        sku: product.sku,
+        category: product.category,
+        size: product.size,
+        description: product.description,
+        attributes: Map<String, String>.from(product.attributes),
+        price: product.price,
+        purchasePrice: product.purchasePrice,
+        quantity: quantity,
+        minQuantity: product.minQuantity,
+        supplier: product.supplier,
+        photo: product.photo,
+        deliveryId: product.deliveryId,
+        photos: List<String>.from(product.photos),
+        costPrice: product.costPrice,
+        marketplacePrice: product.marketplacePrice,
+        marketplace: product.marketplace,
+        marketplaceUrl: product.marketplaceUrl,
+        avitoItemId: product.avitoItemId,
+        discountPercent: product.discountPercent,
+        salePercent: product.salePercent,
+        saleBasePrice: product.saleBasePrice,
+        myPriceOverride: product.myPriceOverride,
+        sold: true,
+        soldAt: now,
+        status: 'sold',
+        salePrice: salePrice,
+        updatedAt: now,
+      )..recordStatusEvent('sold', quantity);
+      product
+        ..quantity -= quantity
+        ..updatedAt = now;
+      products.add(soldPart);
+      saleProductId = soldPart.id;
+    }
+    order
+      ..productId = product.id
+      ..stockWrittenOff = true
+      ..stockWriteOffAt = now
+      ..saleProductId = saleProductId;
+    _audit(
+      'Продажа Авито',
+      'Товар',
+      '${product.sku}: ${_orderQuantity(quantity)} шт, заказ №${order.number}',
+    );
   }
 
   /// Обновляет заказы Авито через сервер VPS (headless-Chromium), чтобы
@@ -14108,6 +14241,7 @@ end tell
           (sum, item) => sum + ((item['count'] as num?)?.toDouble() ?? 0),
         );
         final articles = <String>[];
+        Product? linkedProduct;
         for (final item in items) {
           final listingId = '${item['avitoId'] ?? ''}';
           if (listingId.isEmpty) continue;
@@ -14116,6 +14250,7 @@ end tell
                 product.sku.isNotEmpty &&
                 !articles.contains(product.sku)) {
               articles.add(product.sku);
+              linkedProduct ??= product;
             }
           }
         }
@@ -14135,6 +14270,7 @@ end tell
           phone: '${buyer['phoneNumber'] ?? ''}',
           product: title,
           article: article,
+          productId: linkedProduct?.id ?? existing?.productId ?? '',
           barcode: existing?.barcode ?? '',
           pvz: existing?.pvz ?? '',
           quantity: quantity == 0 ? 1 : quantity,
@@ -14145,8 +14281,12 @@ end tell
           status: _avitoOrderStatus('${raw['status'] ?? ''}'),
           source: 'avito',
           comment: 'Статус Авито: ${raw['status'] ?? ''}',
+          stockWrittenOff: existing?.stockWrittenOff ?? false,
+          stockWriteOffAt: existing?.stockWriteOffAt ?? 0,
+          saleProductId: existing?.saleProductId ?? '',
           updatedAt: now,
         );
+        _applyOrderSaleIfCompleted(mapped);
         if (index >= 0) {
           orders[index] = mapped;
           updated++;
@@ -14331,6 +14471,7 @@ end tell
                   phone: phone.text.trim(),
                   product: product.text.trim(),
                   article: article.text.trim(),
+                  productId: existing?.productId ?? '',
                   barcode: barcode.text.trim(),
                   pvz: pvz.text.trim(),
                   quantity: _excelNumber(quantity.text) ?? 1,
@@ -14340,6 +14481,9 @@ end tell
                   comment: comment.text.trim(),
                   avitoStatus: existing?.avitoStatus ?? '',
                   avitoDeadline: existing?.avitoDeadline ?? '',
+                  stockWrittenOff: existing?.stockWrittenOff ?? false,
+                  stockWriteOffAt: existing?.stockWriteOffAt ?? 0,
+                  saleProductId: existing?.saleProductId ?? '',
                   updatedAt: now.millisecondsSinceEpoch,
                 );
                 Navigator.pop(dialogContext, order);
@@ -14412,7 +14556,10 @@ end tell
         onCreate: () async {
           final order = await _editOrder(null);
           if (order == null) return null;
-          setState(() => orders.add(order));
+          setState(() {
+            _applyOrderSaleIfCompleted(order);
+            orders.add(order);
+          });
           await _saveCrmData();
           _enqueueCloudSnapshot('Заказ', 'Заказ №${order.number}');
           return order;
@@ -14422,7 +14569,10 @@ end tell
           if (updated == null) return null;
           setState(() {
             final index = orders.indexWhere((item) => item.id == updated.id);
-            if (index >= 0) orders[index] = updated;
+            if (index >= 0) {
+              _applyOrderSaleIfCompleted(updated);
+              orders[index] = updated;
+            }
           });
           await _saveCrmData();
           _enqueueCloudSnapshot('Заказ', 'Заказ №${updated.number}');
@@ -14440,19 +14590,21 @@ end tell
           if (mounted) setState(() {});
         },
         onLinkProduct: _linkOrderProduct,
+        onShowLabels: (labelOrders, title) =>
+            showOrderLabels(context, labelOrders, title: title),
         productUrlFor: (order) {
-          for (final product in products) {
-            if (product.sku == order.article) {
-              return product.marketplaceUrl;
-            }
-          }
+          final product = products.cast<Product?>().firstWhere(
+            (item) => item?.id == order.productId,
+            orElse: () => null,
+          );
+          if (product != null) return product.marketplaceUrl;
           return '';
         },
       ),
     );
   }
 
-  /// Ручная привязка заказа к товару CRM с запоминанием по названию.
+  /// Ручная привязка меняет только выбранный заказ.
   Future<void> _linkOrderProduct(Order order) async {
     final controller = TextEditingController();
     String query = '';
@@ -14539,9 +14691,9 @@ end tell
     }
     setState(() {
       order.article = picked.sku;
+      order.productId = picked.id;
       order.updatedAt = DateTime.now().millisecondsSinceEpoch;
     });
-    await _rememberOrderLink(order.product, picked.sku);
     await _saveCrmData();
     _enqueueCloudSnapshot('Заказ', 'Связан с товаром ${picked.sku}');
   }
@@ -18157,6 +18309,15 @@ end tell
         setState(() => accountingCategoryFilter = category),
     onManageCategories: _manageAccountingCategories,
     sheetError: sheetError,
+    intelligenceDashboard: FinanceIntelligenceDashboard(
+      deals: typedDeals,
+      products: products,
+      deliveries: deliveries,
+      stockMovements: stockMovements,
+      transactions: businessTransactions,
+      from: accountingFrom,
+      to: accountingTo,
+    ),
     hasRows: accountingRows.isNotEmpty,
     table: accountingRows.isEmpty
         ? null

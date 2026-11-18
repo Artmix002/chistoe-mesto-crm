@@ -19,6 +19,7 @@ class AccountingPage extends StatelessWidget {
     required this.onCategoryChanged,
     required this.onManageCategories,
     required this.sheetError,
+    required this.intelligenceDashboard,
     required this.hasRows,
     required this.table,
     required this.localOperations,
@@ -40,6 +41,7 @@ class AccountingPage extends StatelessWidget {
   final ValueChanged<String> onCategoryChanged;
   final Future<void> Function() onManageCategories;
   final String? sheetError;
+  final Widget intelligenceDashboard;
   final bool hasRows;
   final Widget? table;
   final Widget localOperations;
@@ -281,6 +283,16 @@ class AccountingPage extends StatelessWidget {
               color: sheetsOfflineMode ? Colors.orange : Colors.red,
             ),
           ),
+        const SizedBox(height: 18),
+        intelligenceDashboard,
+        const SizedBox(height: 18),
+        Text(
+          'Детализация источников',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
         if (!loading && hasRows && table != null) table!,
         if (!loading && !hasRows)
           const Padding(

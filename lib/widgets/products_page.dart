@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../cached_photo.dart';
 import '../models.dart';
 import '../avito_catalog.dart';
+import 'product_finance_dashboard.dart';
 
 class ProductsPage extends StatelessWidget {
   const ProductsPage({
@@ -436,7 +437,11 @@ class ProductsPage extends StatelessWidget {
                 ),
               ),
             TextButton.icon(
-              onPressed: () => _showAccounting(context, items, deliveries),
+              onPressed: () => showProductAccounting(
+                context,
+                products: items,
+                deliveries: deliveries,
+              ),
               icon: const Icon(Icons.account_balance_outlined, size: 18),
               label: const Text('Бухгалтерия'),
             ),
@@ -498,94 +503,6 @@ class ProductsPage extends StatelessWidget {
   double _revenue(List<Product> items, Delivery delivery) => items
       .where((p) => p.deliveryId == delivery.id && p.sold)
       .fold<double>(0, (sum, p) => sum + p.salePrice * p.quantity);
-
-  void _showAccounting(
-    BuildContext context,
-    List<Product> items,
-    List<Delivery> deliveries,
-  ) {
-    var totalCost = 0.0;
-    var totalRevenue = 0.0;
-    final rows = <DataRow>[];
-    for (final d in deliveries) {
-      final products = items.where((p) => p.deliveryId == d.id).toList();
-      final revenue = _revenue(items, d);
-      final sold = products.where((p) => p.sold).length;
-      final inStock = products
-          .where((p) => p.status == 'in_stock')
-          .fold<double>(0, (s, p) => s + p.quantity);
-      final shipped = products
-          .where((p) => p.status == 'shipped')
-          .fold<double>(0, (s, p) => s + p.quantity);
-      final returned = products
-          .where((p) => p.status == 'returned')
-          .fold<double>(0, (s, p) => s + p.quantity);
-      final remainingValue = products
-          .where((p) => p.status == 'in_stock')
-          .fold<double>(0, (s, p) => s + (p.costPrice ?? 0) * p.quantity);
-      totalCost += d.totalCost;
-      totalRevenue += revenue;
-      rows.add(DataRow(cells: [
-        DataCell(Text('#${d.number}')),
-        DataCell(Text(d.name)),
-        DataCell(Text('${_fmtMoney(d.totalCost)} ₽')),
-        DataCell(Text('${_fmtMoney(revenue)} ₽')),
-        DataCell(Text('${_fmtMoney(revenue - d.totalCost)} ₽')),
-        DataCell(Text(_fmtNumber(inStock))),
-        DataCell(Text(_fmtNumber(shipped))),
-        DataCell(Text(_fmtNumber(returned))),
-        DataCell(Text('$sold')),
-        DataCell(Text('${_fmtMoney(remainingValue)} ₽')),
-      ]));
-    }
-    rows.add(DataRow(cells: [
-      const DataCell(Text('Итого')),
-      const DataCell(Text('')),
-      DataCell(Text('${_fmtMoney(totalCost)} ₽')),
-      DataCell(Text('${_fmtMoney(totalRevenue)} ₽')),
-      DataCell(Text('${_fmtMoney(totalRevenue - totalCost)} ₽')),
-      const DataCell(Text('')),
-      const DataCell(Text('')),
-      const DataCell(Text('')),
-      const DataCell(Text('')),
-      const DataCell(Text('')),
-    ]));
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Бухгалтерия товаров'),
-        content: SizedBox(
-          width: 820,
-          child: SingleChildScrollView(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columns: const [
-                  DataColumn(label: Text('№')),
-                  DataColumn(label: Text('Поставка')),
-                  DataColumn(label: Text('Закупка')),
-                  DataColumn(label: Text('Выручка')),
-                  DataColumn(label: Text('Прибыль')),
-                  DataColumn(label: Text('В наличии')),
-                  DataColumn(label: Text('Отправлено')),
-                  DataColumn(label: Text('Возврат')),
-                  DataColumn(label: Text('Продано')),
-                  DataColumn(label: Text('Остаток, ₽')),
-                ],
-                rows: rows,
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Закрыть'),
-          ),
-        ],
-      ),
-    );
-  }
 
   void _showDetails(
     BuildContext context,

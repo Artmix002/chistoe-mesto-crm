@@ -37,6 +37,7 @@ class AvitoFieldContent {
     'data_type': dataType,
     'required': required,
     'values': values,
+    'values_link_json': valuesLinkJson,
   };
 
   factory AvitoFieldContent.fromJson(Map<String, dynamic> json) =>
@@ -107,7 +108,8 @@ class AvitoCategoryNode {
         for (final item in value) {
           if (item is Map) {
             children.add(
-                AvitoCategoryNode.fromJson(Map<String, dynamic>.from(item)));
+              AvitoCategoryNode.fromJson(Map<String, dynamic>.from(item)),
+            );
           } else {
             collect(item);
           }
@@ -121,7 +123,8 @@ class AvitoCategoryNode {
           // Узел может быть как самим узлом, так и группой узлов.
           if (item.containsKey('name') || item.containsKey('slug')) {
             children.add(
-                AvitoCategoryNode.fromJson(Map<String, dynamic>.from(item)));
+              AvitoCategoryNode.fromJson(Map<String, dynamic>.from(item)),
+            );
           } else {
             collect(item);
           }
@@ -174,7 +177,8 @@ class AvitoCatalogData {
         for (final item in list) {
           if (item is Map) {
             tree.add(
-                AvitoCategoryNode.fromJson(Map<String, dynamic>.from(item)));
+              AvitoCategoryNode.fromJson(Map<String, dynamic>.from(item)),
+            );
           }
         }
       }

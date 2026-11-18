@@ -1,86 +1,103 @@
 (() => {
   const text = (node) => (node?.innerText || '').replace(/\s+/g, ' ').trim();
-  const collect = () => {
-    const rows = [...document.querySelectorAll('[data-marker="order-row"], a[href^="/orders/"]')]
-      .map((node) => {
-        const row = node.closest('[data-marker="order-row"]') || node;
-        const link = row.querySelector('a[href^="/orders/"]') || node;
-        const href = link?.getAttribute('href') || '';
-        const match = href.match(/\/orders\/(\d+)/);
-        const image = row.querySelector('img');
-        const itemLink = row.querySelector('a[href*="/item/"], a[href*="_"]');
-        const htmlUrl = (row.outerHTML.match(/https?:\/\/[^"'\s<>]*avito\.ru[^"'\s<>]*/i) || [])[0] ||
-          (row.outerHTML.match(/(?:href|data-url|data-href)=["']([^"']*(?:\/item\/|_\d{7,})[^"']*)/i) || [])[1] || '';
-        return match ? {
-          id: match[1],
-          url: new URL(href, location.origin).href,
-          text: text(row),
-          title: image?.alt || '',
-          itemUrl: itemLink ? new URL(itemLink.getAttribute('href'), location.origin).href :
-            (htmlUrl ? new URL(htmlUrl, location.origin).href : '')
-        } : null;
-      }).filter(Boolean);
-    return [...new Map(rows.map((row) => [row.id, row])).values()];
+  const deliveryService = (body) => {
+    const services = [
+      ['Почта России', /почта\s+россии/i],
+      ['Яндекс', /яндекс(?:\s+доставка|\s+маркет)?/i],
+      ['СДЭК', /сд[эе]к/i],
+      ['Boxberry', /boxberry/i],
+      ['5Post', /5\s*post/i],
+      ['DPD', /\bdpd\b/i],
+      ['DHL', /\bdhl\b/i],
+      ['Авито', /авито\s+доставк/i],
+    ];
+    return services.find(([, pattern]) => pattern.test(body))?.[0] || '';
   };
-  const orderMatch = location.pathname.match(/^\/orders\/(\d+)/);
-  if (orderMatch) {
-    const scan = () => {
-      const links = [...document.querySelectorAll('a[href]')]
-        .map((a) => a.href)
-        .filter((href) => href.includes('avito.ru') && !href.includes('/orders/') &&
-          !href.includes('/profile') && !href.includes('/help'));
-      const embedded = (document.documentElement.innerHTML.match(
-        /https?:\/\/www\.avito\.ru\/[^"'<>\s]+(?:_\d{7,}|\/item\/\d{7,})[^"'<>\s]*/i,
-      ) || [])[0] || '';
-      const itemUrl = links.find((href) => /(?:\/item\/|_\d{7,}|\/\d{7,})/.test(href)) || embedded;
-      const source = `${document.body.innerText}\n${document.documentElement.innerHTML}`;
-      const article = (source.match(/(?:Артикул|арт\.?|SKU)[:\s№#-]*([A-Za-zА-Яа-я0-9_-]+)/i) || [])[1] || '';
-      const productLine = (document.body.innerText.match(/(?:Заказ\s*\n?)?([^\n]+?)\s+\d+\s*[×xх]\s*([\d\s]+)\s*₽/i) || []);
-      const productTitle = productLine[1] ? productLine[1].trim() : '';
-      const productPrice = productLine[2] ? productLine[2].replace(/\s+/g, '') : '';
-      try {
-        if (chrome.runtime?.id) chrome.runtime.sendMessage({type: 'order-detail', id: orderMatch[1], itemUrl, article, productTitle, productPrice});
-      } catch (_) {}
+  const send = (message) => {
+    try { if (chrome.runtime?.id) chrome.runtime.sendMessage(message).catch(() => {}); } catch (_) {}
+  };
+  const orderId = (location.pathname.match(/^\/orders\/(\d+)/) || [])[1];
+
+  if (orderId) {
+    const reportOrder = () => {
+      const body = document.body?.innerText || '';
+      const match = body.match(/(?:^|\n)Заказ\s*\n?([^\n]+?)\s+\d+\s*[×xх]\s*[\d\s\u00a0]+₽/m);
+      if (!match) return false;
+      const barcode = (body.match(/Назовите (?:номер заказа|этот номер):\s*([\d\s]+)/i) || [])[1] || '';
+      const pvz = (
+        body.match(/(?:Примерный срок доставки|Срок хранения)[^\n]*?\s((?:Россия|г\.|Республика)[^\n]+?)(?=\s+График работы|$)/i) ||
+        body.match(/(?:Пункт выдачи|Адрес пункта выдачи|ПВЗ)\s*[:\n]\s*([^\n]{5,160})/i) ||
+        body.match(/(?:Куда доставить|Получение)\s*\n+([^\n]{5,160})/i) ||
+        []
+      )[1] || '';
+      send({
+        type: 'order-ready',
+        id: orderId,
+        productTitle: match[1].trim(),
+        barcode: barcode.replace(/\s+/g, ''),
+        pvz: pvz.replace(/\s+/g, ' ').trim(),
+        shippingService: deliveryService(body),
+      });
+      return true;
     };
-    let attempts = 0;
-    const retry = () => {
-      attempts += 1;
-      scan();
-      if (attempts < 5) setTimeout(retry, 4000);
-    };
-    setTimeout(retry, 3000);
+    let tries = 0;
+    const waitForOrder = () => { if (reportOrder() || ++tries >= 20) return; setTimeout(waitForOrder, 500); };
+    waitForOrder();
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.type !== 'open-order-product') return;
+      const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const wanted = normalize(message.productTitle);
+      const candidates = [...document.querySelectorAll('a, button, [role="link"], span, div')]
+        .filter((node) => normalize(node.innerText).startsWith(wanted))
+        .filter((node) => node.getClientRects().length)
+        .sort((a, b) => normalize(a.innerText).length - normalize(b.innerText).length);
+      if (!candidates.length) return send({type: 'product-open-failed', id: orderId});
+      candidates[0].click();
+    });
     return;
   }
-  const extractDetails = () => {
-    const body = text(document.body);
-    const number = body.match(/(?:Назовите номер заказа|номер заказа|этот номер)[:\s№]*([\d\s]{6,})/i);
-    const article = body.match(/(?:Артикул|арт\.?|SKU)[:\s№#-]*([A-Za-zА-Яа-я0-9_-]+)/i);
-    return {
-      barcode: number ? number[1].replace(/\s+/g, '') : '',
-      article: article ? article[1].trim() : ''
+
+  const listingId = (location.pathname.match(/_(\d{7,})(?:$|[/?#])/) || [])[1];
+  if (listingId) {
+    let tries = 0;
+    const reportListing = () => {
+      const descriptionHeading = [...document.querySelectorAll('h1,h2,h3')]
+        .find((node) => text(node).toLowerCase() === 'описание');
+      const description = text(descriptionHeading?.parentElement?.parentElement) || text(document.body);
+      const explicit = description.match(/(?:артикул|арт\.?|sku)\s*[:№#-]?\s*([a-zа-я0-9_-]{3,})/i);
+      const numbers = [...description.matchAll(/(?<!\d)(\d{3,6})(?!\d)/g)].map((match) => match[1]);
+      if ((!description || description.length < 10) && ++tries < 20) return setTimeout(reportListing, 500);
+      send({type: 'listing-ready', itemId: listingId, itemUrl: location.href, article: explicit?.[1] || numbers.at(-1) || '', articleCandidates: numbers});
     };
+    reportListing();
+    return;
+  }
+
+  const collect = () => [...document.querySelectorAll('[data-marker="order-row"], a[href^="/orders/"]')]
+    .map((node) => {
+      const row = node.closest('[data-marker="order-row"]') || node;
+      const link = row.querySelector('a[href^="/orders/"]') || node;
+      const href = link?.getAttribute('href') || '';
+      const id = (href.match(/\/orders\/(\d+)/) || [])[1];
+      const image = row.querySelector('img');
+      const orderText = (row.innerText || '')
+        .replace(/\n+/g, ' | ')
+        .replace(/[\t ]+/g, ' ')
+        .replace(/(?:\s*\|\s*){2,}/g, ' | ')
+        .trim();
+      return id ? {id, url: new URL(href, location.origin).href, text: orderText, title: image?.alt || ''} : null;
+    }).filter(Boolean);
+  let lastSignature = '';
+  const reportOrders = () => {
+    const orders = [...new Map(collect().map((row) => [row.id, row])).values()];
+    const signature = orders.map((row) => row.id).join(',');
+    if (!orders.length || signature === lastSignature) return;
+    lastSignature = signature;
+    send({type: 'orders', orders});
   };
-  const extractArticleFromAd = async () => {
-    const link = [...document.querySelectorAll('a[href*="/item/"]')][0];
-    if (!link) return '';
-    try {
-      const html = await fetch(link.href, {credentials: 'include'}).then((r) => r.text());
-      const adText = new DOMParser().parseFromString(html, 'text/html')?.body?.innerText || '';
-      const match = adText.match(/(?:Артикул|арт\.?|SKU)[:\s№#-]*([A-Za-zА-Яа-я0-9_-]+)/i);
-      return match ? match[1].trim() : '';
-    } catch (_) { return ''; }
-  };
-  const send = (orders) => {
-    try {
-      if (chrome.runtime?.id) {
-        chrome.runtime.sendMessage({type: 'orders', orders, url: location.href})
-          .catch(() => {});
-      }
-    } catch (_) {}
-  };
-  const enrich = async () => {
-    const orders = collect();
-    send(orders);
-  };
-  enrich();
+  // Other parts of Avito mutate constantly (chat, promos), so waiting for a
+  // quiet DOM never completes. The order list itself is fully visible after a
+  // short fixed delay; retry once if Avito is still loading it.
+  setTimeout(reportOrders, 4000);
+  setTimeout(reportOrders, 8000);
 })();

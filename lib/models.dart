@@ -310,7 +310,8 @@ class Product {
     category: '${j['category'] ?? 'Без категории'}',
     size: '${j['size'] ?? ''}',
     description: '${j['description'] ?? ''}',
-    attributes: (j['attributes'] as Map?)?.map(
+    attributes:
+        (j['attributes'] as Map?)?.map(
           (key, value) => MapEntry('$key', '$value'),
         ) ??
         const {},
@@ -321,7 +322,9 @@ class Product {
     supplier: '${j['supplier'] ?? ''}',
     photo: '${j['photo'] ?? ''}',
     deliveryId: '${j['deliveryId'] ?? ''}',
-    photos: (j['photos'] as List? ?? const []).map((e) => e.toString()).toList(),
+    photos: (j['photos'] as List? ?? const [])
+        .map((e) => e.toString())
+        .toList(),
     costPrice: (j['costPrice'] as num?)?.toDouble(),
     marketplacePrice: (j['marketplacePrice'] as num?)?.toDouble() ?? 0,
     marketplaceUrl: '${j['marketplaceUrl'] ?? ''}',
@@ -350,11 +353,13 @@ class Product {
 extension ProductStatusRecording on Product {
   void recordStatusEvent(String status, double quantity) {
     final events = List<ProductStatusEvent>.from(statusEvents)
-      ..add(ProductStatusEvent(
-        status: status,
-        at: DateTime.now().toIso8601String(),
-        quantity: quantity,
-      ));
+      ..add(
+        ProductStatusEvent(
+          status: status,
+          at: DateTime.now().toIso8601String(),
+          quantity: quantity,
+        ),
+      );
     statusEvents = events.length > 50
         ? events.sublist(events.length - 50)
         : events;
@@ -755,6 +760,7 @@ class Order {
     this.phone = '',
     this.product = '',
     this.article = '',
+    this.productId = '',
     this.barcode = '',
     this.pvz = '',
     this.quantity = 1,
@@ -764,6 +770,9 @@ class Order {
     this.comment = '',
     this.avitoStatus = '',
     this.avitoDeadline = '',
+    this.stockWrittenOff = false,
+    this.stockWriteOffAt = 0,
+    this.saleProductId = '',
     this.updatedAt = 0,
   });
 
@@ -774,6 +783,10 @@ class Order {
   String phone;
   String product;
   String article;
+
+  /// Stable CRM product ID. SKU is displayed to the user, but this is used
+  /// for inventory operations so a renamed article cannot break the link.
+  String productId;
   String barcode;
   String pvz;
   double quantity;
@@ -783,6 +796,9 @@ class Order {
   String comment;
   String avitoStatus;
   String avitoDeadline;
+  bool stockWrittenOff;
+  int stockWriteOffAt;
+  String saleProductId;
   int updatedAt;
 
   Map<String, dynamic> toJson() => {
@@ -793,6 +809,7 @@ class Order {
     'phone': phone,
     'product': product,
     'article': article,
+    'productId': productId,
     'barcode': barcode,
     'pvz': pvz,
     'quantity': quantity,
@@ -802,6 +819,9 @@ class Order {
     'comment': comment,
     'avitoStatus': avitoStatus,
     'avitoDeadline': avitoDeadline,
+    'stockWrittenOff': stockWrittenOff,
+    'stockWriteOffAt': stockWriteOffAt,
+    'saleProductId': saleProductId,
     'updatedAt': updatedAt,
   };
 
@@ -813,6 +833,7 @@ class Order {
     phone: '${j['phone'] ?? ''}',
     product: '${j['product'] ?? ''}',
     article: '${j['article'] ?? ''}',
+    productId: '${j['productId'] ?? ''}',
     barcode: '${j['barcode'] ?? ''}',
     pvz: '${j['pvz'] ?? ''}',
     quantity: (j['quantity'] as num?)?.toDouble() ?? 1,
@@ -822,6 +843,9 @@ class Order {
     comment: '${j['comment'] ?? ''}',
     avitoStatus: '${j['avitoStatus'] ?? ''}',
     avitoDeadline: '${j['avitoDeadline'] ?? ''}',
+    stockWrittenOff: j['stockWrittenOff'] == true,
+    stockWriteOffAt: (j['stockWriteOffAt'] as num?)?.toInt() ?? 0,
+    saleProductId: '${j['saleProductId'] ?? ''}',
     updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
   );
 }
