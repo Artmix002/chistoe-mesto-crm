@@ -170,6 +170,13 @@ Map<String, dynamic> buildSyncPayload(
         'entries': auditEntries.map(Map<String, dynamic>.from).toList(),
       };
     default:
-      return {...base, 'scope': 'auditOnly'};
+      // Служебные события (например, вход в CRM) тоже попадают в журнал.
+      // Пустой auditOnly-снимок без entries ломает чтение всего workspace на
+      // сервере, поэтому всегда передаём корректный список.
+      return {
+        ...base,
+        'scope': 'auditOnly',
+        'entries': auditEntries.map(Map<String, dynamic>.from).toList(),
+      };
   }
 }

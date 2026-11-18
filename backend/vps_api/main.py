@@ -382,7 +382,13 @@ def project_workspace(values, user):
         workspace.update(knowledge)
     audit = _snapshot(values, 'auditOnly', user)
     if audit is not None:
-        workspace['audit'] = _objects(audit, 'entries', 'auditOnly')
+        # Журнал не является рабочими данными. Старый клиент мог сохранить
+        # auditOnly без entries; не даём такому снимку скрыть товары и другие
+        # разделы всей CRM.
+        try:
+            workspace['audit'] = _objects(audit, 'entries', 'auditOnly')
+        except ValueError:
+            pass
     return workspace
 
 
@@ -1536,6 +1542,11 @@ def api(req: dict[str, Any]):
                     continue
                 new_revision = revision + 1
                 stored_payload = payload
+                if scope == 'auditOnly' and not isinstance(payload.get('entries'), list):
+                    # Совместимость со старыми приложениями: их служебный
+                    # auditOnly без entries принимаем как пустой журнал.
+                    stored_payload = dict(payload)
+                    stored_payload['entries'] = []
                 if scope in MERGE_SCOPES:
                     row = c.execute(text('select payload from crm_snapshots where scope=:scope'), {'scope': scope}).scalar()
                     existing_payload = row if isinstance(row, dict) else (json.loads(row) if row else None)
