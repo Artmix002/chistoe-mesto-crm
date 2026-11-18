@@ -4870,17 +4870,19 @@ $instructions
   /// Загружает каталог отдельным запросом. Это намеренно не ждёт синхронизации
   /// заметок, сообщений или других разделов: на новом Windows-компьютере
   /// товары должны появляться сразу после входа.
-  Future<void> _refreshProductsFromCloud() async {
+  Future<int> _refreshProductsFromCloud({bool force = false}) async {
     final service = _authService;
     final session = _session;
-    if (_productCloudRefreshInProgress || service == null || session == null) {
-      return;
+    if (service == null || session == null) {
+      throw StateError('Войдите в общую CRM по PIN.');
     }
-    if (products.isNotEmpty) return;
+    if (_productCloudRefreshInProgress || (!force && products.isNotEmpty)) {
+      return products.length;
+    }
     _productCloudRefreshInProgress = true;
     try {
       final remoteProducts = await service.readProducts(session.token);
-      if (remoteProducts.isEmpty || !mounted || products.isNotEmpty) return;
+      if (!mounted || (!force && products.isNotEmpty)) return products.length;
       products
         ..clear()
         ..addAll(remoteProducts.map(Product.fromJson));
@@ -4888,12 +4890,14 @@ $instructions
       _fillAvitoItemIds();
       await _saveCrmData();
       if (mounted) setState(() {});
+      return products.length;
     } catch (error) {
       CrmLogger.error(
         'Не удалось загрузить товары с сервера',
         error: error,
         name: 'crm.products',
       );
+      rethrow;
     } finally {
       _productCloudRefreshInProgress = false;
     }
@@ -13203,6 +13207,7 @@ $instructions
       onSalePriceChanged: _updateProductSalePrice,
       onSale: _applySale,
       onAvitoSync: _syncWithAvito,
+      onRefreshFromServer: () => _refreshProductsFromCloud(force: true),
       onAvitoSettings: _showAvitoSettings,
       onAvitoCatalog: _showAvitoCatalogDialog,
       onAvitoStats: _refreshAvitoStats,

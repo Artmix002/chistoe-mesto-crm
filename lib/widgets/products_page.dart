@@ -26,6 +26,7 @@ class ProductsPage extends StatelessWidget {
     required this.onDeleteDelivery,
     this.onStatusChanged,
     this.onAvitoSync,
+    this.onRefreshFromServer,
     this.onAvitoSettings,
     this.onAvitoCatalog,
     this.onAvitoStats,
@@ -62,6 +63,7 @@ class ProductsPage extends StatelessWidget {
   final Future<void> Function(Delivery) onDeleteDelivery;
   final void Function(Product product, String status)? onStatusChanged;
   final Future<void> Function()? onAvitoSync;
+  final Future<int> Function()? onRefreshFromServer;
   final Future<void> Function()? onAvitoSettings;
   final Future<void> Function()? onAvitoCatalog;
   final Future<void> Function()? onAvitoStats;
@@ -71,10 +73,16 @@ class ProductsPage extends StatelessWidget {
   final Future<void> Function()? onExportExcel;
   final Future<void> Function()? onImportExcel;
   final Future<void> Function()? onImportAvito;
-  final Future<void> Function(List<Product> products,
-      {String? status, String? deliveryId, String? category})? onBulkUpdate;
+  final Future<void> Function(
+    List<Product> products, {
+    String? status,
+    String? deliveryId,
+    String? category,
+  })?
+  onBulkUpdate;
   final Future<void> Function(List<Product> products, double percent)? onSale;
-  final Future<void> Function(Product product, double price)? onSalePriceChanged;
+  final Future<void> Function(Product product, double price)?
+  onSalePriceChanged;
   final VoidCallback onStartProduct;
   final ValueChanged<Product> onSaveProduct;
   final Future<void> Function(Product) onDeleteProduct;
@@ -108,10 +116,7 @@ class ProductsPage extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  color: Color(0xFFC7D2FE),
-                  fontSize: 10,
-                ),
+                style: const TextStyle(color: Color(0xFFC7D2FE), fontSize: 10),
               ),
               Text(
                 value,
@@ -169,17 +174,27 @@ class ProductsPage extends StatelessWidget {
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFB2B8C2)
         : const Color(0xFF626975);
-    final delivery = deliveries
-        .cast<Delivery?>()
-        .firstWhere((d) => d?.id == selectedDeliveryId, orElse: () => null);
-    final visible = items
-        .where((p) => selectedDeliveryId.isEmpty || p.deliveryId == selectedDeliveryId)
-        .toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    final totalAmount =
-        items.fold<double>(0, (sum, product) => sum + product.amount);
+    final delivery = deliveries.cast<Delivery?>().firstWhere(
+      (d) => d?.id == selectedDeliveryId,
+      orElse: () => null,
+    );
+    final visible =
+        items
+            .where(
+              (p) =>
+                  selectedDeliveryId.isEmpty ||
+                  p.deliveryId == selectedDeliveryId,
+            )
+            .toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final totalAmount = items.fold<double>(
+      0,
+      (sum, product) => sum + product.amount,
+    );
     final soldCount = items.where((product) => product.sold).length;
-    final inStock = items.where((product) => product.status == 'in_stock').length;
+    final inStock = items
+        .where((product) => product.status == 'in_stock')
+        .length;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -312,6 +327,28 @@ class ProductsPage extends StatelessWidget {
                   icon: const Icon(Icons.receipt_long_outlined, size: 18),
                   label: const Text('Заказы'),
                 ),
+              ),
+            if (onRefreshFromServer != null)
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    final count = await onRefreshFromServer!();
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Обновлено с сервера: $count товаров'),
+                      ),
+                    );
+                  } catch (error) {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Не удалось обновить товары: $error'),
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Обновить товары'),
               ),
             OutlinedButton.icon(
               onPressed: onNewDelivery,
@@ -500,60 +537,63 @@ class ProductsPage extends StatelessWidget {
       v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
 }
 
-  double _revenue(List<Product> items, Delivery delivery) => items
-      .where((p) => p.deliveryId == delivery.id && p.sold)
-      .fold<double>(0, (sum, p) => sum + p.salePrice * p.quantity);
+double _revenue(List<Product> items, Delivery delivery) => items
+    .where((p) => p.deliveryId == delivery.id && p.sold)
+    .fold<double>(0, (sum, p) => sum + p.salePrice * p.quantity);
 
-  void _showDetails(
-    BuildContext context,
-    Product p,
-    String mediaBaseUrl,
-    bool canEdit,
-    ValueChanged<Product> onEditProduct,
-    List<Delivery> deliveries,
-    Future<void> Function(Product) onDeleteProduct,
-    Set<String> feedSkus,
-    bool feedSkusLoaded,
-  ) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => _ProductDetailsDialog(
-        product: p,
-        mediaBaseUrl: mediaBaseUrl,
-        canEdit: canEdit,
-        deliveries: deliveries,
-        feedSkus: feedSkus,
-        feedSkusLoaded: feedSkusLoaded,
-        onEdit: () {
-          Navigator.pop(dialogContext);
-          onEditProduct(p);
-        },
-        onDelete: () {
-          Navigator.pop(dialogContext);
-          onDeleteProduct(p);
-        },
-        onClose: () => Navigator.pop(dialogContext),
-      ),
-    );
-  }
-
-  Widget _info(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(width: 190, child: Text(label, style: const TextStyle(color: Colors.grey))),
-        Expanded(child: SelectableText(value.isEmpty ? '—' : value)),
-      ],
+void _showDetails(
+  BuildContext context,
+  Product p,
+  String mediaBaseUrl,
+  bool canEdit,
+  ValueChanged<Product> onEditProduct,
+  List<Delivery> deliveries,
+  Future<void> Function(Product) onDeleteProduct,
+  Set<String> feedSkus,
+  bool feedSkusLoaded,
+) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => _ProductDetailsDialog(
+      product: p,
+      mediaBaseUrl: mediaBaseUrl,
+      canEdit: canEdit,
+      deliveries: deliveries,
+      feedSkus: feedSkus,
+      feedSkusLoaded: feedSkusLoaded,
+      onEdit: () {
+        Navigator.pop(dialogContext);
+        onEditProduct(p);
+      },
+      onDelete: () {
+        Navigator.pop(dialogContext);
+        onDeleteProduct(p);
+      },
+      onClose: () => Navigator.pop(dialogContext),
     ),
   );
+}
 
-  String _deliveryTitle(String id, List<Delivery> deliveries) {
-    for (final d in deliveries) {
-      if (d.id == id) return '#${d.number} ${d.name}';
-    }
-    return '';
+Widget _info(String label, String value) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 3),
+  child: Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SizedBox(
+        width: 190,
+        child: Text(label, style: const TextStyle(color: Colors.grey)),
+      ),
+      Expanded(child: SelectableText(value.isEmpty ? '—' : value)),
+    ],
+  ),
+);
+
+String _deliveryTitle(String id, List<Delivery> deliveries) {
+  for (final d in deliveries) {
+    if (d.id == id) return '#${d.number} ${d.name}';
   }
+  return '';
+}
 
 class _ProductDetailsDialog extends StatefulWidget {
   const _ProductDetailsDialog({
@@ -602,8 +642,7 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
     final inFeed = widget.feedSkusLoaded
         ? widget.feedSkus.contains(p.sku)
         : productInAvitoFeed(p);
-    final color =
-        inFeed ? const Color(0xFF16A34A) : const Color(0xFF9CA3AF);
+    final color = inFeed ? const Color(0xFF16A34A) : const Color(0xFF9CA3AF);
     return Tooltip(
       message: inFeed
           ? 'Товар есть в фиде автозагрузки Авито'
@@ -646,7 +685,9 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
     final muted = dark ? const Color(0xFF9AA3B5) : const Color(0xFF667085);
     final size = MediaQuery.sizeOf(context);
     final photos = p.photos;
-    final selected = photos.isEmpty ? '' : photos[_photo.clamp(0, photos.length - 1)];
+    final selected = photos.isEmpty
+        ? ''
+        : photos[_photo.clamp(0, photos.length - 1)];
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(22),
@@ -708,8 +749,9 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
                                         ),
                                         decoration: BoxDecoration(
                                           color: card,
-                                          borderRadius:
-                                              BorderRadius.circular(10),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
                                           border: Border.all(color: border),
                                         ),
                                         child: RichText(
@@ -774,9 +816,19 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
                               'Подробности',
                               Column(
                                 children: [
-                                  _infoRow('Поставка', _deliveryTitle(), muted, border),
+                                  _infoRow(
+                                    'Поставка',
+                                    _deliveryTitle(),
+                                    muted,
+                                    border,
+                                  ),
                                   _infoRow('Артикул', p.sku, muted, border),
-                                  _infoRow('Категория', p.category, muted, border),
+                                  _infoRow(
+                                    'Категория',
+                                    p.category,
+                                    muted,
+                                    border,
+                                  ),
                                   _infoRow(
                                     'Размер / особенности',
                                     p.size,
@@ -789,7 +841,12 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
                                     muted,
                                     border,
                                   ),
-                                  _infoRow('Скидка', '${_fmtNumber(p.discountPercent)}%', muted, border),
+                                  _infoRow(
+                                    'Скидка',
+                                    '${_fmtNumber(p.discountPercent)}%',
+                                    muted,
+                                    border,
+                                  ),
                                   if (p.sold)
                                     _infoRow(
                                       'Дата продажи',
@@ -810,8 +867,9 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
                                     for (final event
                                         in p.statusEvents.reversed.take(8))
                                       Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 8),
+                                        padding: const EdgeInsets.only(
+                                          bottom: 8,
+                                        ),
                                         child: Row(
                                           children: [
                                             Container(
@@ -900,10 +958,7 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
               ],
             ),
           ),
-          IconButton(
-            onPressed: widget.onClose,
-            icon: const Icon(Icons.close),
-          ),
+          IconButton(onPressed: widget.onClose, icon: const Icon(Icons.close)),
         ],
       ),
     );
@@ -951,7 +1006,10 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
                           insetPadding: const EdgeInsets.all(24),
                           child: InteractiveViewer(
                             child: CachedPhoto(
-                              url: _mediaPhotoUrl(selected, widget.mediaBaseUrl),
+                              url: _mediaPhotoUrl(
+                                selected,
+                                widget.mediaBaseUrl,
+                              ),
                               fit: BoxFit.contain,
                             ),
                           ),
@@ -1068,19 +1126,13 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
           children: [
             Icon(icon, size: 18, color: color),
             const SizedBox(height: 8),
-            Text(
-              title,
-              style: TextStyle(fontSize: 10, color: color),
-            ),
+            Text(title, style: TextStyle(fontSize: 10, color: color)),
             const SizedBox(height: 2),
             Text(
               value,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-              ),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
             ),
           ],
         ),
@@ -1141,17 +1193,16 @@ class _ProductDetailsDialogState extends State<_ProductDetailsDialog> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 5),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: border.withValues(alpha: 0.5))),
+        border: Border(
+          bottom: BorderSide(color: border.withValues(alpha: 0.5)),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 180,
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 12, color: muted),
-            ),
+            child: Text(label, style: TextStyle(fontSize: 12, color: muted)),
           ),
           Expanded(
             child: SelectableText(
@@ -1223,15 +1274,19 @@ class _DeliveryDetailsDialog extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final Future<void> Function(Product product, double price)?
-      onSalePriceChanged;
+  onSalePriceChanged;
   final VoidCallback onClose;
 
   double get cost => delivery.totalCost;
   double get revenue => goods
       .where((product) => product.sold)
-      .fold<double>(0, (sum, product) => sum + product.salePrice * product.quantity);
+      .fold<double>(
+        0,
+        (sum, product) => sum + product.salePrice * product.quantity,
+      );
   double get profit => revenue - cost;
-  double get percent => cost <= 0 ? (revenue > 0 ? 100 : 0) : revenue / cost * 100;
+  double get percent =>
+      cost <= 0 ? (revenue > 0 ? 100 : 0) : revenue / cost * 100;
   double get totalQuantity =>
       goods.fold<double>(0, (sum, product) => sum + product.quantity);
   double get soldQuantity => goods
@@ -1240,7 +1295,8 @@ class _DeliveryDetailsDialog extends StatelessWidget {
   double get amount =>
       goods.fold<double>(0, (sum, product) => sum + product.amount);
 
-  Color get accent => percent >= 100 ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+  Color get accent =>
+      percent >= 100 ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
 
   @override
   Widget build(BuildContext context) {
@@ -1547,10 +1603,7 @@ class _DeliveryDetailsDialog extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: TextStyle(fontSize: 10, color: color),
-                  ),
+                  Text(title, style: TextStyle(fontSize: 10, color: color)),
                   Text(
                     value,
                     maxLines: 1,
@@ -1645,8 +1698,7 @@ class _DeliveryDetailsDialog extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
                 decoration: BoxDecoration(
                   color: border,
                   borderRadius: BorderRadius.circular(20),
@@ -1700,31 +1752,33 @@ class _DeliveryDetailsDialog extends StatelessWidget {
                             ? () => _editSale(context, product)
                             : null,
                         child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            product.name.isEmpty ? 'Без названия' : product.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              product.name.isEmpty
+                                  ? 'Без названия'
+                                  : product.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
-                          Text(
-                            [
-                              '${_fmtNumber(product.quantity)} шт',
-                              if (product.size.isNotEmpty) product.size,
-                              if (sales)
-                                'продано за ${_fmtMoney(product.salePrice)} ₽'
-                                    '${product.soldTimestamp > 0 ? ' · ${_fmtDate(product.soldTimestamp)}' : ''}',
-                            ].join(' · '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 10, color: muted),
-                          ),
-                        ],
-                      ),
+                            Text(
+                              [
+                                '${_fmtNumber(product.quantity)} шт',
+                                if (product.size.isNotEmpty) product.size,
+                                if (sales)
+                                  'продано за ${_fmtMoney(product.salePrice)} ₽'
+                                      '${product.soldTimestamp > 0 ? ' · ${_fmtDate(product.soldTimestamp)}' : ''}',
+                              ].join(' · '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 10, color: muted),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     if (!sales)
@@ -1817,8 +1871,8 @@ class _DeliveryBubble extends StatelessWidget {
     final color = value == null
         ? scheme.primary
         : done
-            ? Colors.green
-            : Colors.red;
+        ? Colors.green
+        : Colors.red;
     final progress = value == null ? 0.0 : (value / 100).clamp(0.0, 1.0);
     return InkWell(
       onTap: onTap,
@@ -1900,7 +1954,9 @@ class _AvitoPill extends StatelessWidget {
                   : '';
               if (url.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Авито: ссылка ещё не синхронизирована')),
+                  const SnackBar(
+                    content: Text('Авито: ссылка ещё не синхронизирована'),
+                  ),
                 );
                 return;
               }
@@ -1944,9 +2000,9 @@ class _MarketplacePill extends StatelessWidget {
           onTap: url.isEmpty
               ? null
               : () => launchUrl(
-                    Uri.parse(url),
-                    mode: LaunchMode.externalApplication,
-                  ),
+                  Uri.parse(url),
+                  mode: LaunchMode.externalApplication,
+                ),
           child: Center(
             child: Text(
               isWb ? 'WB' : 'OZON',
@@ -1977,10 +2033,7 @@ class _StatusPill extends StatelessWidget {
       'shipped' => ('Отправлен', Colors.amber),
       'returned' => ('Возврат', Colors.amber),
       'ready' => ('Готов к продаже', const Color(0xFF007AFF)),
-      _ => (
-          '${_fmtNumber(product.quantity)} шт',
-          Colors.green,
-        ),
+      _ => ('${_fmtNumber(product.quantity)} шт', Colors.green),
     };
     return Container(
       width: 104,
@@ -2040,9 +2093,8 @@ String _fmtDateTime(String value) {
 
 String _fmtNumber(double v) =>
     v == v.roundToDouble() ? v.toInt().toString() : '$v';
-String _fmtMoney(double v) => v == v.roundToDouble()
-    ? v.toInt().toString()
-    : v.toStringAsFixed(2);
+String _fmtMoney(double v) =>
+    v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
 
 void _showAvitoSync(BuildContext context) {
   showDialog<void>(
@@ -2104,8 +2156,13 @@ class _ProductCatalog extends StatefulWidget {
   final void Function(Product, String)? onStatusChanged;
   final ValueChanged<Product> onEditProduct;
   final Future<void> Function(Product) onDeleteProduct;
-  final Future<void> Function(List<Product> products,
-      {String? status, String? deliveryId, String? category})? onBulkUpdate;
+  final Future<void> Function(
+    List<Product> products, {
+    String? status,
+    String? deliveryId,
+    String? category,
+  })?
+  onBulkUpdate;
   final Future<void> Function(List<Product> products, double percent)? onSale;
   // SKU товаров, которые есть в фиде автозагрузки Авито.
   final Set<String> feedSkus;
@@ -2166,16 +2223,20 @@ class _ProductCatalogState extends State<_ProductCatalog> {
   List<Product> get filtered {
     final q = query.trim().toLowerCase();
     return widget.items
-        .where((p) =>
-            widget.selectedDeliveryId.isEmpty ||
-            p.deliveryId == widget.selectedDeliveryId)
+        .where(
+          (p) =>
+              widget.selectedDeliveryId.isEmpty ||
+              p.deliveryId == widget.selectedDeliveryId,
+        )
         .where((p) => statuses.isEmpty || statuses.contains(p.status))
-        .where((p) =>
-            q.isEmpty ||
-            p.name.toLowerCase().contains(q) ||
-            p.sku.toLowerCase().contains(q) ||
-            p.category.toLowerCase().contains(q) ||
-            p.supplier.toLowerCase().contains(q))
+        .where(
+          (p) =>
+              q.isEmpty ||
+              p.name.toLowerCase().contains(q) ||
+              p.sku.toLowerCase().contains(q) ||
+              p.category.toLowerCase().contains(q) ||
+              p.supplier.toLowerCase().contains(q),
+        )
         .toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
@@ -2210,14 +2271,12 @@ class _ProductCatalogState extends State<_ProductCatalog> {
   }
 
   static int _naturalCompare(String a, String b) {
-    final left = RegExp(r'\d+|\D+')
-        .allMatches(a.toLowerCase())
-        .map((m) => m.group(0)!)
-        .toList();
-    final right = RegExp(r'\d+|\D+')
-        .allMatches(b.toLowerCase())
-        .map((m) => m.group(0)!)
-        .toList();
+    final left = RegExp(
+      r'\d+|\D+',
+    ).allMatches(a.toLowerCase()).map((m) => m.group(0)!).toList();
+    final right = RegExp(
+      r'\d+|\D+',
+    ).allMatches(b.toLowerCase()).map((m) => m.group(0)!).toList();
     final length = left.length < right.length ? left.length : right.length;
     for (var i = 0; i < length; i++) {
       final l = left[i];
@@ -2273,23 +2332,23 @@ class _ProductCatalogState extends State<_ProductCatalog> {
   }
 
   PopupMenuButton<String> _sortButton() => PopupMenuButton<String>(
-        tooltip: 'Сортировка',
-        icon: const Icon(Icons.sort),
-        initialValue: sort,
-        onSelected: (value) {
-        setState(() => sort = value);
-        _persistListPreferences();
-      },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'updated', child: Text('Сначала новые')),
-          PopupMenuItem(value: 'sku_asc', child: Text('Артикул: А–Я')),
-          PopupMenuItem(value: 'sku_desc', child: Text('Артикул: Я–А')),
-          PopupMenuItem(value: 'name_asc', child: Text('Название: А–Я')),
-          PopupMenuItem(value: 'price_asc', child: Text('Цена: по возрастанию')),
-          PopupMenuItem(value: 'price_desc', child: Text('Цена: по убыванию')),
-          PopupMenuItem(value: 'qty_desc', child: Text('Количество: больше')),
-        ],
-      );
+    tooltip: 'Сортировка',
+    icon: const Icon(Icons.sort),
+    initialValue: sort,
+    onSelected: (value) {
+      setState(() => sort = value);
+      _persistListPreferences();
+    },
+    itemBuilder: (_) => const [
+      PopupMenuItem(value: 'updated', child: Text('Сначала новые')),
+      PopupMenuItem(value: 'sku_asc', child: Text('Артикул: А–Я')),
+      PopupMenuItem(value: 'sku_desc', child: Text('Артикул: Я–А')),
+      PopupMenuItem(value: 'name_asc', child: Text('Название: А–Я')),
+      PopupMenuItem(value: 'price_asc', child: Text('Цена: по возрастанию')),
+      PopupMenuItem(value: 'price_desc', child: Text('Цена: по убыванию')),
+      PopupMenuItem(value: 'qty_desc', child: Text('Количество: больше')),
+    ],
+  );
 
   Widget _tile(Product p) {
     final name = p.name.trim().isEmpty ? 'Без названия' : p.name;
@@ -2362,40 +2421,37 @@ class _ProductCatalogState extends State<_ProductCatalog> {
           ),
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: [_feedBadge(p)],
-            ),
+            child: Wrap(spacing: 6, runSpacing: 4, children: [_feedBadge(p)]),
           ),
-          if (p.avitoStatsAt > 0)if (p.avitoStatsAt > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: [
-                  _statChip(
-                    Icons.visibility_outlined,
-                    p.avitoViews,
-                    'Просмотры за 30 дней',
-                    const Color(0xFF2563EB),
-                  ),
-                  _statChip(
-                    Icons.chat_bubble_outline,
-                    p.avitoContacts,
-                    'Контакты за 30 дней',
-                    const Color(0xFF16A34A),
-                  ),
-                  _statChip(
-                    Icons.favorite_border,
-                    p.avitoFavorites,
-                    'В избранном за 30 дней',
-                    const Color(0xFFDB2777),
-                  ),
-                ],
+          if (p.avitoStatsAt > 0)
+            if (p.avitoStatsAt > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    _statChip(
+                      Icons.visibility_outlined,
+                      p.avitoViews,
+                      'Просмотры за 30 дней',
+                      const Color(0xFF2563EB),
+                    ),
+                    _statChip(
+                      Icons.chat_bubble_outline,
+                      p.avitoContacts,
+                      'Контакты за 30 дней',
+                      const Color(0xFF16A34A),
+                    ),
+                    _statChip(
+                      Icons.favorite_border,
+                      p.avitoFavorites,
+                      'В избранном за 30 дней',
+                      const Color(0xFFDB2777),
+                    ),
+                  ],
+                ),
               ),
-            ),
         ],
       ),
       isThreeLine: p.avitoStatsAt > 0,
@@ -2415,41 +2471,44 @@ class _ProductCatalogState extends State<_ProductCatalog> {
                   _StatusPill(product: p)
                 else
                   PopupMenuButton<String>(
-              tooltip: 'Изменить статус',
-              onSelected: (value) => widget.onStatusChanged!(p, value),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'in_stock', child: Text('В наличии')),
-                PopupMenuItem(
-                  value: 'ready',
-                  child: Text('Готов к продаже'),
-                ),
-                PopupMenuItem(value: 'shipped', child: Text('Отправлен')),
-                PopupMenuItem(value: 'returned', child: Text('Возврат')),
-                PopupMenuItem(value: 'sold', child: Text('Продан')),
-              ],
+                    tooltip: 'Изменить статус',
+                    onSelected: (value) => widget.onStatusChanged!(p, value),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'in_stock',
+                        child: Text('В наличии'),
+                      ),
+                      PopupMenuItem(
+                        value: 'ready',
+                        child: Text('Готов к продаже'),
+                      ),
+                      PopupMenuItem(value: 'shipped', child: Text('Отправлен')),
+                      PopupMenuItem(value: 'returned', child: Text('Возврат')),
+                      PopupMenuItem(value: 'sold', child: Text('Продан')),
+                    ],
                     child: _StatusPill(product: p),
                   ),
               ],
             ),
       onTap: selectMode
           ? () => setState(() {
-                if (isSelected) {
-                  selected.remove(p.id);
-                } else {
-                  selected.add(p.id);
-                }
-              })
+              if (isSelected) {
+                selected.remove(p.id);
+              } else {
+                selected.add(p.id);
+              }
+            })
           : () => _showDetails(
-                context,
-                p,
-                widget.mediaBaseUrl,
-                widget.canEdit,
-                widget.onEditProduct,
-                widget.deliveries,
-                widget.onDeleteProduct,
-                widget.feedSkus,
-                widget.feedSkusLoaded,
-              ),
+              context,
+              p,
+              widget.mediaBaseUrl,
+              widget.canEdit,
+              widget.onEditProduct,
+              widget.deliveries,
+              widget.onDeleteProduct,
+              widget.feedSkus,
+              widget.feedSkusLoaded,
+            ),
     );
   }
 
@@ -2488,8 +2547,7 @@ class _ProductCatalogState extends State<_ProductCatalog> {
     final inFeed = widget.feedSkusLoaded
         ? widget.feedSkus.contains(p.sku)
         : productInAvitoFeed(p);
-    final color =
-        inFeed ? const Color(0xFF16A34A) : const Color(0xFF9CA3AF);
+    final color = inFeed ? const Color(0xFF16A34A) : const Color(0xFF9CA3AF);
     return Tooltip(
       message: inFeed
           ? 'Товар есть в фиде автозагрузки Авито'
@@ -2609,9 +2667,7 @@ class _ProductCatalogState extends State<_ProductCatalog> {
                         color: selected ? Colors.white : entry.$3,
                         fontWeight: FontWeight.w600,
                       ),
-                      side: BorderSide(
-                        color: entry.$3.withValues(alpha: 0.45),
-                      ),
+                      side: BorderSide(color: entry.$3.withValues(alpha: 0.45)),
                       onSelected: (value) {
                         setState(() {
                           if (value) {
@@ -2880,8 +2936,7 @@ class _ProductCatalogState extends State<_ProductCatalog> {
       ),
     );
     if (value == null || value.isEmpty || !mounted) return;
-    final targets =
-        widget.items.where((p) => selected.contains(p.id)).toList();
+    final targets = widget.items.where((p) => selected.contains(p.id)).toList();
     await widget.onBulkUpdate!(targets, category: value);
     if (!mounted) return;
     setState(() => selected.clear());
@@ -2933,8 +2988,6 @@ void _showDeliveryDetails(
   );
 }
 
-
-
 /// Категории, которые поддерживает фид автозагрузки Авито (совпадает с
 /// AVITO_CATEGORY_MAP на сервере).
 const avitoFeedCategoryIds = <String, int>{
@@ -2985,7 +3038,9 @@ bool productInAvitoFeed(Product p) {
       !name.toLowerCase().contains('детск')) {
     return false;
   }
-  final price = p.myPriceOverride ?? p.marketplacePrice * (1 - (p.discountPercent.clamp(0, 100) / 100));
+  final price =
+      p.myPriceOverride ??
+      p.marketplacePrice * (1 - (p.discountPercent.clamp(0, 100) / 100));
   if (price <= 0) return false;
   if (p.photos.where((photo) => photo.trim().isNotEmpty).isEmpty) return false;
   return true;
