@@ -477,6 +477,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   DateTime? customFrom, customTo;
   Timer? clock;
   Timer? pendingChangesSyncTimer;
+  Timer? automaticSyncDebounce;
   Timer? workspaceRefreshTimer;
   Timer? appointmentReminderTimer;
   final Set<String> sentAppointmentReminderKeys = {};
@@ -1217,13 +1218,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       const Duration(seconds: 30),
       (_) => _retryPendingMessages(),
     );
-    pendingChangesSyncTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (localChangeQueue.hasRetryableItems(DateTime.now())) {
-        unawaited(_syncPendingChanges(silent: true, respectBackoff: true));
-      }
+    pendingChangesSyncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _scheduleAutomaticSync();
     });
-    workspaceRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      unawaited(_refreshWorkspaceFromCloud());
+    workspaceRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _scheduleAutomaticSync(refreshFromCloud: true);
     });
     appointmentReminderTimer = Timer.periodic(
       const Duration(minutes: 1),
@@ -1319,6 +1318,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     clock?.cancel();
     pendingMessageTimer?.cancel();
     pendingChangesSyncTimer?.cancel();
+    automaticSyncDebounce?.cancel();
     workspaceRefreshTimer?.cancel();
     appointmentReminderTimer?.cancel();
     avitoAudioPositionSubscription?.cancel();
@@ -1341,7 +1341,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(_refreshWorkspaceFromCloud());
+      _scheduleAutomaticSync(refreshFromCloud: true);
       // Бейджи «на Авито» обновляем независимо от состояния очереди.
       unawaited(_refreshFeedSkus());
       unawaited(_refreshAvitoCatalog());
@@ -2201,7 +2201,37 @@ $instructions
       payload: _syncPayload(entity),
     );
     unawaited(_saveCrmData());
-    unawaited(_syncPendingChanges(silent: true));
+    // Несколько сохранений подряд (например, правка карточки товара) уходят
+    // одним свежим снимком. Пользователю не нужно ждать периодического таймера.
+    _scheduleAutomaticSync(delay: const Duration(milliseconds: 500));
+  }
+
+  void _scheduleAutomaticSync({
+    Duration delay = Duration.zero,
+    bool refreshFromCloud = false,
+  }) {
+    if (!mounted || !_crmDataLoaded) return;
+    automaticSyncDebounce?.cancel();
+    automaticSyncDebounce = Timer(delay, () {
+      unawaited(_runAutomaticSync(refreshFromCloud: refreshFromCloud));
+    });
+  }
+
+  Future<void> _runAutomaticSync({bool refreshFromCloud = false}) async {
+    if (!mounted) return;
+    if (pendingChangesSyncing) {
+      _scheduleAutomaticSync(
+        delay: const Duration(seconds: 1),
+        refreshFromCloud: refreshFromCloud,
+      );
+      return;
+    }
+    if (localChangeQueue.hasRetryableItems(DateTime.now())) {
+      await _syncPendingChanges(silent: true, respectBackoff: true);
+    }
+    if (refreshFromCloud || localChangeQueue.items.isEmpty) {
+      await _refreshWorkspaceFromCloud();
+    }
   }
 
   String _templateDurationText(String service) {
