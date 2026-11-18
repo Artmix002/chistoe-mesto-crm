@@ -41,6 +41,7 @@ class SettingsPage extends StatelessWidget {
     required this.syncStatus,
     required this.integrationHealth,
     required this.onRefreshEverything,
+    required this.onUpdateApplication,
     required this.onSyncPendingChanges,
     required this.onExportPendingChanges,
     required this.auditEntries,
@@ -78,6 +79,7 @@ class SettingsPage extends StatelessWidget {
   final CrmSyncStatus syncStatus;
   final List<IntegrationHealth> integrationHealth;
   final Future<void> Function() onRefreshEverything;
+  final Future<void> Function() onUpdateApplication;
   final Future<void> Function() onSyncPendingChanges;
   final Future<void> Function() onExportPendingChanges;
   final List<AuditEntry> auditEntries;
@@ -249,6 +251,12 @@ class SettingsPage extends StatelessWidget {
                   enabled: isOwner && hasSyncCredentials,
                   onPressed: onFullSync,
                 ),
+                _actionButton(
+                  label: 'Обновить CRM',
+                  icon: Icons.system_update_outlined,
+                  enabled: isOwner,
+                  onPressed: onUpdateApplication,
+                ),
               ],
             ),
           ),
@@ -408,8 +416,7 @@ class SettingsPage extends StatelessWidget {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                    onPressed: onRetryConflicts == null ||
-                            pendingChangesSyncing
+                    onPressed: onRetryConflicts == null || pendingChangesSyncing
                         ? null
                         : () => unawaited(onRetryConflicts!()),
                     icon: const Icon(Icons.refresh, size: 18),

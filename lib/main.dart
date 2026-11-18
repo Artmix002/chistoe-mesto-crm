@@ -1299,6 +1299,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 : (added: 0, updated: 0);
             if (rows is List) {
               ordersAvitoSyncedAt = DateTime.now().millisecondsSinceEpoch;
+              _enqueueCloudSnapshot('Заказ', 'Заказы из Авито (Chrome)');
             }
             await _saveCrmData();
             if (mounted) {
@@ -12032,12 +12033,52 @@ $instructions
     syncStatus: _syncStatus,
     integrationHealth: _integrationHealth,
     onRefreshEverything: _refreshEverything,
+    onUpdateApplication: _updateApplication,
     onSyncPendingChanges: _syncPendingChanges,
     onExportPendingChanges: _exportPendingChanges,
     onRetryConflicts: _retryConflictChanges,
     conflictsCount: localChangeQueue.reviewCount,
     auditEntries: auditEntries,
   );
+
+  Future<void> _updateApplication() async {
+    const releasesUrl =
+        'https://github.com/Artmix002/chistoe-mesto-crm/releases/latest';
+    if (Platform.isWindows) {
+      final appDirectory = File(Platform.resolvedExecutable).parent;
+      final updater = File(
+        '${appDirectory.path}${Platform.pathSeparator}Обновить CRM.cmd',
+      );
+      if (!await updater.exists()) {
+        throw StateError(
+          'Не найден файл «Обновить CRM.cmd» рядом с программой.',
+        );
+      }
+      final started = await Process.start('cmd', [
+        '/c',
+        'start',
+        '',
+        updater.path,
+      ], runInShell: true);
+      unawaited(started.exitCode);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Запущено обновление CRM. Программа закроется и откроется снова.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    final opened = await launchUrl(
+      Uri.parse(releasesUrl),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened)
+      throw StateError('Не удалось открыть страницу обновлений CRM.');
+  }
 
   Future<void> _syncAllCrmData() async {
     if (currentRole != 'Владелец' ||
