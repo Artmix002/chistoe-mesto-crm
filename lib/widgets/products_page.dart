@@ -297,7 +297,7 @@ class ProductsPage extends StatelessWidget {
           ),
         ),
         SizedBox(
-          height: 112,
+          height: 82,
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
@@ -1887,54 +1887,82 @@ class _DeliveryBubble extends StatelessWidget {
         ? Colors.green
         : Colors.red;
     final progress = value == null ? 0.0 : (value / 100).clamp(0.0, 1.0);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(44),
-      child: Container(
-        width: 92,
-        margin: const EdgeInsets.only(right: 6),
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected ? scheme.primary : Colors.transparent,
-            width: 1.5,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 176,
+          margin: const EdgeInsets.only(right: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected
+                ? color.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? color : color.withValues(alpha: 0.16),
+              width: selected ? 1.5 : 1,
+            ),
           ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 58,
-              height: 58,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  CircularProgressIndicator(
-                    value: value == null ? 1 : progress,
-                    strokeWidth: 6,
-                    color: color,
-                    backgroundColor: color.withValues(alpha: 0.15),
-                  ),
-                  Text(
-                    value == null ? 'Все' : '${value.round()}%',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+          child: Row(
+            children: [
+              SizedBox(
+                width: 42,
+                height: 42,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: value == null ? 1 : progress,
+                      strokeWidth: 4,
                       color: color,
+                      backgroundColor: color.withValues(alpha: 0.14),
                     ),
-                  ),
-                ],
+                    Text(
+                      value == null ? 'Все' : '${value.round()}%',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: color,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 10),
-            ),
-          ],
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value == null
+                          ? 'Все товары'
+                          : done
+                          ? 'Окупилась'
+                          : 'Окупаемость',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 10, color: color),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2190,6 +2218,7 @@ class _ProductCatalogState extends State<_ProductCatalog> {
   final Set<String> statuses = {};
   String sort = 'updated';
   bool group = false;
+  bool grid = true;
   final Set<String> expanded = {};
   bool selectMode = false;
   final Set<String> selected = {};
@@ -2218,6 +2247,7 @@ class _ProductCatalogState extends State<_ProductCatalog> {
           if (old != 'all') statuses.add(old);
         }
         group = prefs.getBool('crm_catalog_group') ?? group;
+        grid = prefs.getBool('crm_catalog_grid') ?? grid;
       });
     } catch (_) {}
   }
@@ -2229,6 +2259,7 @@ class _ProductCatalogState extends State<_ProductCatalog> {
         await prefs.setString('crm_catalog_sort', sort);
         await prefs.setStringList('crm_catalog_statuses', statuses.toList());
         await prefs.setBool('crm_catalog_group', group);
+        await prefs.setBool('crm_catalog_grid', grid);
       } catch (_) {}
     }());
   }
@@ -2362,6 +2393,363 @@ class _ProductCatalogState extends State<_ProductCatalog> {
       PopupMenuItem(value: 'qty_desc', child: Text('Количество: больше')),
     ],
   );
+
+  Color _statusColor(Product product) => switch (product.status) {
+    'in_stock' => const Color(0xFF16A34A),
+    'ready' => const Color(0xFF2563EB),
+    'shipped' => const Color(0xFFF59E0B),
+    'returned' => const Color(0xFF9333EA),
+    'sold' => const Color(0xFF64748B),
+    _ => const Color(0xFF64748B),
+  };
+
+  String _statusLabel(Product product) => switch (product.status) {
+    'in_stock' => 'В наличии',
+    'ready' => 'Готов к продаже',
+    'shipped' => 'Отправлен',
+    'returned' => 'Возврат',
+    'sold' => 'Продан',
+    _ => 'Без статуса',
+  };
+
+  Widget _statusMenu(Product product) {
+    final color = _statusColor(product);
+    final pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        _statusLabel(product),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+    if (widget.onStatusChanged == null) return pill;
+    return PopupMenuButton<String>(
+      tooltip: 'Изменить статус',
+      padding: EdgeInsets.zero,
+      onSelected: (value) => widget.onStatusChanged!(product, value),
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'in_stock', child: Text('В наличии')),
+        PopupMenuItem(value: 'ready', child: Text('Готов к продаже')),
+        PopupMenuItem(value: 'shipped', child: Text('Отправлен')),
+        PopupMenuItem(value: 'returned', child: Text('Возврат')),
+        PopupMenuItem(value: 'sold', child: Text('Продан')),
+      ],
+      child: pill,
+    );
+  }
+
+  Widget _inventoryCard(Product product, int index) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final border = dark ? const Color(0xFF2B3445) : const Color(0xFFE2E8F0);
+    final surface = dark ? const Color(0xFF161C27) : Colors.white;
+    final muted = dark ? const Color(0xFF9CA8BA) : const Color(0xFF667085);
+    final photo = product.photos.isEmpty ? '' : product.photos.first;
+    final name = product.name.trim().isEmpty ? 'Без названия' : product.name;
+    final isSelected = selected.contains(product.id);
+    final salePrice = product.onSale ? product.saleNewPrice : product.myPrice;
+    final available = product.status == 'in_stock' || product.status == 'ready';
+
+    return TweenAnimationBuilder<double>(
+      duration: Duration(milliseconds: 180 + (index.clamp(0, 6) * 35)),
+      curve: Curves.easeOutCubic,
+      tween: Tween(begin: 0, end: 1),
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(
+          offset: Offset(0, 14 * (1 - value)),
+          child: child,
+        ),
+      ),
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        scale: isSelected ? 0.98 : 1,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: selectMode
+                ? () => setState(() {
+                    if (isSelected) {
+                      selected.remove(product.id);
+                    } else {
+                      selected.add(product.id);
+                    }
+                  })
+                : () => _showDetails(
+                    context,
+                    product,
+                    widget.mediaBaseUrl,
+                    widget.canEdit,
+                    widget.onEditProduct,
+                    widget.deliveries,
+                    widget.onDeleteProduct,
+                    widget.feedSkus,
+                    widget.feedSkusLoaded,
+                  ),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? const Color(
+                        0xFF2563EB,
+                      ).withValues(alpha: dark ? 0.20 : 0.08)
+                    : surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isSelected ? const Color(0xFF2563EB) : border,
+                  width: isSelected ? 1.6 : 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: dark ? 0.12 : 0.055),
+                    blurRadius: isSelected ? 18 : 10,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    flex: 12,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ColoredBox(
+                          color: dark
+                              ? const Color(0xFF10151F)
+                              : const Color(0xFFF5F7FA),
+                          child: photo.isEmpty
+                              ? Icon(
+                                  Icons.inventory_2_outlined,
+                                  size: 38,
+                                  color: muted,
+                                )
+                              : CachedPhoto(
+                                  url: _mediaPhotoUrl(
+                                    photo,
+                                    widget.mediaBaseUrl,
+                                  ),
+                                  fit: BoxFit.cover,
+                                ),
+                        ),
+                        Positioned(
+                          top: 9,
+                          left: 9,
+                          child: selectMode
+                              ? DecoratedBox(
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Checkbox(
+                                    value: isSelected,
+                                    visualDensity: VisualDensity.compact,
+                                    onChanged: (_) => setState(() {
+                                      if (isSelected) {
+                                        selected.remove(product.id);
+                                      } else {
+                                        selected.add(product.id);
+                                      }
+                                    }),
+                                  ),
+                                )
+                              : _statusMenu(product),
+                        ),
+                        if (product.onSale)
+                          Positioned(
+                            right: 9,
+                            top: 9,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFDC2626),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'СКИДКА',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (photo.isNotEmpty && product.photos.length > 1)
+                          Positioned(
+                            right: 9,
+                            bottom: 9,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xCC111827),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.photo_library_outlined,
+                                    color: Colors.white,
+                                    size: 12,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    '${product.photos.length}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    flex: 13,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              if (product.sku.isNotEmpty)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(
+                                      0xFF4338CA,
+                                    ).withValues(alpha: 0.10),
+                                    borderRadius: BorderRadius.circular(7),
+                                  ),
+                                  child: Text(
+                                    'арт. ${product.sku}',
+                                    style: const TextStyle(
+                                      color: Color(0xFF4338CA),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              const Spacer(),
+                              _feedBadge(product),
+                            ],
+                          ),
+                          const SizedBox(height: 7),
+                          Text(
+                            name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              height: 1.18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            [
+                                  product.category,
+                                  if (product.size.isNotEmpty) product.size,
+                                ]
+                                .where((text) => text.trim().isNotEmpty)
+                                .join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: muted),
+                          ),
+                          const Spacer(),
+                          Divider(height: 12, color: border),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (product.onSale)
+                                      Text(
+                                        '${_fmtMoney(product.saleOldPrice)} ₽',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: muted,
+                                          decoration:
+                                              TextDecoration.lineThrough,
+                                        ),
+                                      ),
+                                    Text(
+                                      '${_fmtMoney(salePrice)} ₽',
+                                      style: const TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color:
+                                      (available
+                                              ? const Color(0xFF16A34A)
+                                              : const Color(0xFF64748B))
+                                          .withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '${_fmtNumber(product.quantity)} шт',
+                                  style: TextStyle(
+                                    color: available
+                                        ? const Color(0xFF15803D)
+                                        : const Color(0xFF64748B),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _tile(Product p) {
     final name = p.name.trim().isEmpty ? 'Без названия' : p.name;
@@ -2606,94 +2994,231 @@ class _ProductCatalogState extends State<_ProductCatalog> {
     ].join(' · ');
   }
 
+  Widget _statusFilter({
+    required String label,
+    required int count,
+    required Color color,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: active ? color : color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: color.withValues(alpha: active ? 0 : 0.28),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: active ? Colors.white : color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: active
+                      ? Colors.white.withValues(alpha: 0.18)
+                      : color.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    color: active ? Colors.white : color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = _sorted(filtered);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final surface = dark ? const Color(0xFF161C27) : Colors.white;
+    final border = dark ? const Color(0xFF2B3445) : const Color(0xFFE2E8F0);
+    final muted = dark ? const Color(0xFF9CA8BA) : const Color(0xFF667085);
+    final total = items.fold<double>(0, (sum, item) => sum + item.amount);
+    final statusCounts = <String, int>{
+      for (final status in const [
+        'in_stock',
+        'ready',
+        'shipped',
+        'returned',
+        'sold',
+      ])
+        status: filtered.where((product) => product.status == status).length,
+    };
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'Поиск по артикулу, названию или категории',
-                ),
-                onChanged: (value) => setState(() => query = value),
-              ),
-            ),
-            const SizedBox(width: 8),
-            _sortButton(),
-            const SizedBox(width: 4),
-            FilterChip(
-              label: const Text('По артикулу'),
-              selected: group,
-              onSelected: (value) {
-                setState(() => group = value);
-                _persistListPreferences();
-              },
-            ),
-            if (widget.onBulkUpdate != null)
-              IconButton(
-                tooltip: selectMode ? 'Выйти из выбора' : 'Массовые действия',
-                isSelected: selectMode,
-                onPressed: () => setState(() {
-                  selectMode = !selectMode;
-                  selected.clear();
-                }),
-                icon: const Icon(Icons.checklist_outlined),
-              ),
-          ],
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              FilterChip(
-                label: const Text('Все статусы'),
-                selected: statuses.isEmpty,
-                onSelected: (_) {
-                  setState(statuses.clear);
-                  _persistListPreferences();
-                },
+              Row(
+                children: [
+                  const Icon(
+                    Icons.inventory_2_outlined,
+                    size: 19,
+                    color: Color(0xFF4F46E5),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Каталог',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${items.length} поз.',
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_fmtMoney(total)} ₽',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
               ),
-              for (final entry in const [
-                ('in_stock', 'В наличии', Color(0xFF16A34A)),
-                ('ready', 'Готов к продаже', Color(0xFF007AFF)),
-                ('shipped', 'Отправлен', Color(0xFFF59E0B)),
-                ('returned', 'Возврат', Color(0xFFF59E0B)),
-                ('sold', 'Продан', Color(0xFFDC2626)),
-              ])
-                Builder(
-                  builder: (context) {
-                    final selected = statuses.contains(entry.$1);
-                    return FilterChip(
-                      label: Text(entry.$2),
-                      selected: selected,
-                      selectedColor: entry.$3,
-                      checkmarkColor: Colors.white,
-                      labelStyle: TextStyle(
-                        color: selected ? Colors.white : entry.$3,
-                        fontWeight: FontWeight.w600,
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 360,
+                    child: TextField(
+                      decoration: InputDecoration(
+                        isDense: true,
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: query.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Очистить поиск',
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () => setState(() => query = ''),
+                              ),
+                        hintText: 'Артикул, название, категория…',
                       ),
-                      side: BorderSide(color: entry.$3.withValues(alpha: 0.45)),
-                      onSelected: (value) {
-                        setState(() {
-                          if (value) {
-                            statuses.add(entry.$1);
-                          } else {
-                            statuses.remove(entry.$1);
-                          }
-                        });
+                      onChanged: (value) => setState(() => query = value),
+                    ),
+                  ),
+                  _sortButton(),
+                  Tooltip(
+                    message: grid ? 'Показать списком' : 'Показать карточками',
+                    child: IconButton.filledTonal(
+                      onPressed: () {
+                        setState(() => grid = !grid);
                         _persistListPreferences();
                       },
-                    );
-                  },
+                      icon: Icon(
+                        grid
+                            ? Icons.view_list_outlined
+                            : Icons.grid_view_rounded,
+                      ),
+                    ),
+                  ),
+                  FilterChip(
+                    avatar: const Icon(Icons.account_tree_outlined, size: 16),
+                    label: const Text('По артикулу'),
+                    selected: group,
+                    onSelected: (value) {
+                      setState(() => group = value);
+                      _persistListPreferences();
+                    },
+                  ),
+                  if (widget.onBulkUpdate != null)
+                    Tooltip(
+                      message: selectMode
+                          ? 'Завершить выбор'
+                          : 'Массовые действия',
+                      child: IconButton.filledTonal(
+                        isSelected: selectMode,
+                        onPressed: () => setState(() {
+                          selectMode = !selectMode;
+                          selected.clear();
+                        }),
+                        icon: const Icon(Icons.checklist_outlined),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _statusFilter(
+                      label: 'Все',
+                      count: filtered.length,
+                      color: const Color(0xFF4F46E5),
+                      active: statuses.isEmpty,
+                      onTap: () {
+                        setState(statuses.clear);
+                        _persistListPreferences();
+                      },
+                    ),
+                    for (final entry in const [
+                      ('in_stock', 'В наличии', Color(0xFF16A34A)),
+                      ('ready', 'Готов', Color(0xFF2563EB)),
+                      ('shipped', 'Отправлен', Color(0xFFF59E0B)),
+                      ('returned', 'Возврат', Color(0xFF9333EA)),
+                      ('sold', 'Продан', Color(0xFF64748B)),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.only(left: 7),
+                        child: _statusFilter(
+                          label: entry.$2,
+                          count: statusCounts[entry.$1] ?? 0,
+                          color: entry.$3,
+                          active: statuses.contains(entry.$1),
+                          onTap: () {
+                            setState(() {
+                              if (statuses.contains(entry.$1)) {
+                                statuses.remove(entry.$1);
+                              } else {
+                                statuses.add(entry.$1);
+                              }
+                            });
+                            _persistListPreferences();
+                          },
+                        ),
+                      ),
+                  ],
                 ),
+              ),
             ],
           ),
         ),
@@ -2838,12 +3363,51 @@ class _ProductCatalogState extends State<_ProductCatalog> {
             ),
           )
         else if (!group)
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: items.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (context, index) => _tile(items[index]),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: grid
+                ? LayoutBuilder(
+                    key: const ValueKey('grid'),
+                    builder: (context, constraints) {
+                      final width = constraints.maxWidth;
+                      final columns = width >= 1240
+                          ? 4
+                          : width >= 900
+                          ? 3
+                          : width >= 590
+                          ? 2
+                          : 1;
+                      return GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: items.length,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: columns == 1 ? 1.7 : 0.82,
+                        ),
+                        itemBuilder: (context, index) =>
+                            _inventoryCard(items[index], index),
+                      );
+                    },
+                  )
+                : ListView.separated(
+                    key: const ValueKey('list'),
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: items.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 6),
+                    itemBuilder: (context, index) => Material(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF161C27)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      child: _tile(items[index]),
+                    ),
+                  ),
           )
         else
           for (final entry in _groups(items).entries)
