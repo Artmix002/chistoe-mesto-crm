@@ -4462,6 +4462,7 @@ $instructions
       if (snapshot == null) return;
       final cloud = snapshot.workspace;
       _seedMissingCloudScopes(cloud);
+      await _reconcileProductCatalogWithCloud(cloud);
       if (cloud.isEmpty) return;
       _cloudRevisions
         ..clear()
@@ -4797,6 +4798,48 @@ $instructions
         hasLocalData: calendarEvents.isNotEmpty,
       );
     }
+  }
+
+  /// После перехода со старой версии в очереди могло не быть уже созданных
+  /// товаров. Один раз сверяем их с серверным снимком: передаём только
+  /// отсутствующие или более новые локальные карточки. Удаления намеренно не
+  /// отправляем, чтобы старый кэш не мог снять с сервера чужой товар.
+  Future<void> _reconcileProductCatalogWithCloud(
+    Map<String, dynamic> cloud,
+  ) async {
+    const marker = 'crm_products_reconciled_v1';
+    if (prefs.getBool(marker) == true ||
+        products.isEmpty ||
+        !cloud.containsKey('products')) {
+      return;
+    }
+    final remote = cloud['products'];
+    if (remote is! List) return;
+    final remoteUpdatedAt = <String, int>{
+      for (final value in remote.whereType<Map>())
+        if (value['id']?.toString().isNotEmpty ?? false)
+          value['id'].toString():
+              (value['updatedAt'] as num?)?.toInt() ??
+              int.tryParse(value['updatedAt']?.toString() ?? '') ??
+              0,
+    };
+    final hasNewerLocalProduct = products.any(
+      (product) =>
+          !remoteUpdatedAt.containsKey(product.id) ||
+          product.updatedAt > (remoteUpdatedAt[product.id] ?? 0),
+    );
+    await prefs.setBool(marker, true);
+    if (!hasNewerLocalProduct) return;
+
+    final payload = _syncPayload('Товар на продажу')
+      ..['deletedIds'] = const <String>[];
+    localChangeQueue.enqueue(
+      entity: 'Товар на продажу',
+      details: 'Автоматическая сверка каталога товаров',
+      payload: payload,
+    );
+    unawaited(_saveCrmData());
+    _scheduleAutomaticSync(delay: const Duration(milliseconds: 500));
   }
 
   Future<void> _refreshWorkspaceFromCloud() async {
