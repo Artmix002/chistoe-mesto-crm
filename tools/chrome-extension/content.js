@@ -17,6 +17,12 @@
     try { if (chrome.runtime?.id) chrome.runtime.sendMessage(message).catch(() => {}); } catch (_) {}
   };
   const orderId = (location.pathname.match(/^\/orders\/(\d+)/) || [])[1];
+  const heartbeat = () => fetch('http://127.0.0.1:47621/avito/extension/heartbeat', {
+    method: 'POST',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({url: location.href}),
+  }).catch(() => {});
+  heartbeat();
 
   if (orderId) {
     const reportOrder = () => {

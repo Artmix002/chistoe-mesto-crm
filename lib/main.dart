@@ -416,6 +416,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   String? _avitoImportRequestId;
   String? _avitoImportItemId;
   Completer<_AvitoListingImport>? _avitoImportCompleter;
+  int _avitoExtensionLastSeenAt = 0;
+  String _avitoExtensionLastUrl = '';
   late final ApiClient _apiClient;
   CrmAuthService? _authService;
   bool _serverConfigurationInitialized = false;
@@ -1350,6 +1352,27 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             jsonEncode({
               'pending': pending,
               if (pending) 'requestId': _avitoImportRequestId,
+            }),
+          );
+        } else if (request.method == 'POST' &&
+            request.uri.path == '/avito/extension/heartbeat') {
+          try {
+            final body = await utf8.decoder.bind(request).join();
+            final data = jsonDecode(body);
+            _avitoExtensionLastSeenAt = DateTime.now().millisecondsSinceEpoch;
+            _avitoExtensionLastUrl = data is Map ? '${data['url'] ?? ''}' : '';
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(jsonEncode({'ok': true}));
+          } catch (_) {
+            request.response.statusCode = HttpStatus.badRequest;
+          }
+        } else if (request.method == 'GET' &&
+            request.uri.path == '/avito/extension/status') {
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(
+            jsonEncode({
+              'lastSeenAt': _avitoExtensionLastSeenAt,
+              'url': _avitoExtensionLastUrl,
             }),
           );
         } else if (request.method == 'POST' &&
@@ -13485,6 +13508,26 @@ $instructions
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Не удалось открыть Google Chrome')),
+        );
+      }
+      return;
+    }
+
+    await Future<void>.delayed(const Duration(seconds: 3));
+    final expectedExtensionUrl = _avitoExtensionLastUrl;
+    final extensionIsConnected =
+        DateTime.now().millisecondsSinceEpoch - _avitoExtensionLastSeenAt <
+            const Duration(seconds: 15).inMilliseconds &&
+        _avitoIdFromUrl(expectedExtensionUrl) == itemId;
+    if (!extensionIsConnected) {
+      _avitoImportCompleter = null;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Расширение Chrome не подключилось к карточке. Перезагрузите расширение и страницу Авито.',
+            ),
+          ),
         );
       }
       return;
