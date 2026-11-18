@@ -123,6 +123,15 @@
           /(?:avito\.st|avito\.ru).*(?:^|[./])image(?:[/?]|$)/i.test(url),
         );
       const photos = [...new Set(imageUrls)].slice(0, 10);
+      const photoDebug = [...document.images].map((image) => {
+        const marker = image.closest('[data-marker]')?.getAttribute('data-marker') || '';
+        return {
+          src: image.currentSrc || image.src || '',
+          alt: image.alt || '',
+          marker,
+          inItemView: Boolean(image.closest('[data-marker="item-view"]')),
+        };
+      }).slice(0, 100);
       const article = (
         descriptionText.match(/(?:артикул|арт\.?|sku)\s*[:№#-]?\s*([a-zа-я0-9_-]{3,})/i) ||
         []
@@ -142,6 +151,7 @@
             attributes,
             article,
             photos,
+            photoDebug,
           }),
         });
       } catch (_) {}

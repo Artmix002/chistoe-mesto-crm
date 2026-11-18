@@ -1387,6 +1387,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 _avitoImportCompleter!.isCompleted) {
               request.response.statusCode = HttpStatus.conflict;
             } else {
+              final photoDebug = data['photoDebug'];
+              if (photoDebug is List) {
+                await File(
+                  '${Directory.systemTemp.path}/crm_avito_photo_debug.json',
+                ).writeAsString(jsonEncode(photoDebug));
+              }
               _avitoImportCompleter!.complete(
                 _AvitoListingImport.fromJson(Map<String, dynamic>.from(data)),
               );
