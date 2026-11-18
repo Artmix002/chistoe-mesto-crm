@@ -102,13 +102,26 @@
         if (lines.length < 2 || lines[0].length > 50 || lines[1].length > 120) continue;
         if (!attributes[lines[0]]) attributes[lines[0]] = lines.slice(1).join(', ');
       }
-      const imageUrls = [...document.images]
+      // Avito adds logos, badges and recommendations to the page as ordinary
+      // images. Only the item gallery contains the listing's own photographs.
+      const galleryRoots = [...document.querySelectorAll(
+        '[data-marker*="gallery" i], [data-marker*="image-frame" i], [class*="gallery" i]',
+      )];
+      const galleryImages = galleryRoots.length
+        ? galleryRoots.flatMap((root) => [...root.querySelectorAll('img')])
+        : [...document.images].filter((image) =>
+          /(?:^|[./])image(?:[/?]|$)/i.test(image.currentSrc || image.src || ''),
+        );
+      const imageUrls = galleryImages
         .flatMap((image) => {
           const srcset = image.getAttribute('srcset') || '';
           const best = srcset.split(',').map((item) => item.trim().split(/\s+/)[0]).filter(Boolean).at(-1);
           return [best, image.currentSrc, image.src];
         })
-        .filter((url) => /^https?:\/\//.test(url) && /avito|cdn|image/i.test(url));
+        .filter((url) =>
+          /^https?:\/\//.test(url) &&
+          /(?:avito\.st|avito\.ru).*(?:^|[./])image(?:[/?]|$)/i.test(url),
+        );
       const photos = [...new Set(imageUrls)].slice(0, 10);
       const article = (
         descriptionText.match(/(?:артикул|арт\.?|sku)\s*[:№#-]?\s*([a-zа-я0-9_-]{3,})/i) ||
