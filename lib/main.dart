@@ -4459,8 +4459,10 @@ $instructions
           syncToken != requestedToken) {
         return;
       }
-      if (snapshot == null || snapshot.workspace.isEmpty) return;
+      if (snapshot == null) return;
       final cloud = snapshot.workspace;
+      _seedMissingCloudScopes(cloud);
+      if (cloud.isEmpty) return;
       _cloudRevisions
         ..clear()
         ..addAll(snapshot.revisions);
@@ -4719,6 +4721,80 @@ $instructions
         'Не удалось восстановить облачное рабочее пространство',
         error: error,
         name: 'crm.cloud',
+      );
+    }
+  }
+
+  /// На первом компьютере данные могли существовать только локально. Если
+  /// сервер ещё не получил конкретный раздел, отправляем его снимок один раз.
+  /// Наличие ключа в ответе (даже с пустым списком) означает, что сервер уже
+  /// является источником истины и локальный кэш не отправляется поверх него.
+  void _seedMissingCloudScopes(Map<String, dynamic> cloud) {
+    void seed({
+      required String cloudKey,
+      required String entity,
+      required String details,
+      required bool hasLocalData,
+    }) {
+      if (cloud.containsKey(cloudKey) || !hasLocalData) return;
+      _enqueueCloudSnapshot(entity, details);
+    }
+
+    seed(
+      cloudKey: 'clients',
+      entity: 'Клиент',
+      details: 'Первичная автоматическая выгрузка клиентов',
+      hasLocalData: clients.isNotEmpty,
+    );
+    seed(
+      cloudKey: 'stockItems',
+      entity: 'Склад',
+      details: 'Первичная автоматическая выгрузка склада',
+      hasLocalData: stockItems.isNotEmpty || stockMovements.isNotEmpty,
+    );
+    seed(
+      cloudKey: 'products',
+      entity: 'Товар на продажу',
+      details: 'Первичная автоматическая выгрузка товаров',
+      hasLocalData: products.isNotEmpty,
+    );
+    seed(
+      cloudKey: 'deliveries',
+      entity: 'Поставка',
+      details: 'Первичная автоматическая выгрузка поставок',
+      hasLocalData: deliveries.isNotEmpty,
+    );
+    seed(
+      cloudKey: 'orders',
+      entity: 'Заказ',
+      details: 'Первичная автоматическая выгрузка заказов',
+      hasLocalData: orders.isNotEmpty,
+    );
+    seed(
+      cloudKey: 'manualDeals',
+      entity: 'Сделка',
+      details: 'Первичная автоматическая выгрузка сделок',
+      hasLocalData: manualDealRows.isNotEmpty,
+    );
+    seed(
+      cloudKey: 'transactions',
+      entity: 'Бухгалтерия',
+      details: 'Первичная автоматическая выгрузка бухгалтерии',
+      hasLocalData:
+          businessTransactions.isNotEmpty || closedAccountingPeriods.isNotEmpty,
+    );
+    seed(
+      cloudKey: 'serviceCatalog',
+      entity: 'Справочник услуг',
+      details: 'Первичная автоматическая выгрузка услуг',
+      hasLocalData: serviceCatalog.isNotEmpty,
+    );
+    if (!_usesGoogleCalendar) {
+      seed(
+        cloudKey: 'appointments',
+        entity: 'Запись',
+        details: 'Первичная автоматическая выгрузка записей',
+        hasLocalData: calendarEvents.isNotEmpty,
       );
     }
   }
