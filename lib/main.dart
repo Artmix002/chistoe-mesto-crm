@@ -751,10 +751,25 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       }
       await secretStore.delete('crm_session_token');
       if (!mounted || _session?.token != token) return;
-      setState(() {
-        _session = null;
-        _authError = 'Сессия завершена. Войдите по PIN.';
-      });
+      try {
+        final users = await service.listUsers();
+        if (!mounted || _session?.token != token) return;
+        setState(() {
+          _session = null;
+          _serverUsers = users;
+          _authLoading = false;
+          _authError = users.isEmpty
+              ? 'CRM-сервер не вернул доступные профили.'
+              : 'Сессия завершена. Войдите по PIN.';
+        });
+      } catch (retryError) {
+        if (!mounted || _session?.token != token) return;
+        setState(() {
+          _session = null;
+          _authLoading = false;
+          _authError = _safeAuthError(retryError);
+        });
+      }
     } catch (_) {
       // Network errors preserve the local session and offline workspace.
     }
@@ -784,14 +799,14 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Введите URL опубликованного Web app из Google Apps Script. Это публичный адрес приложения, но доступ к CRM защищён персональным PIN и сессией.',
+                  'Введите HTTPS-адрес CRM-сервера. Доступ к данным защищён персональным PIN и сессией.',
                 ),
                 const SizedBox(height: 14),
                 TextField(
                   controller: controller,
                   decoration: const InputDecoration(
                     labelText: 'HTTPS URL CRM-сервера',
-                    hintText: 'https://script.google.com/macros/s/…/exec',
+                    hintText: 'https://ваш-crm-сервер.ru',
                   ),
                 ),
                 if (error != null) ...[
