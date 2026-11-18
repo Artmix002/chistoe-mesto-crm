@@ -4,7 +4,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$Repository,
   [Parameter(Mandatory = $true)]
-  [string]$AssetName
+  [string]$AssetPrefix
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,22 +15,44 @@ function Stop-Crm {
     Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
-try {
-  $installPath = [System.IO.Path]::GetFullPath($InstallDir)
-  if (-not (Test-Path -LiteralPath $installPath -PathType Container)) {
-    throw "Папка приложения не найдена: $installPath"
+function Resolve-InstallPath {
+  param([string]$SuggestedPath)
+
+  $candidate = [System.IO.Path]::GetFullPath($SuggestedPath)
+  if (Test-Path -LiteralPath (Join-Path $candidate 'CleanPlaceCRM.exe') -PathType Leaf) {
+    return $candidate
   }
+
+  Add-Type -AssemblyName System.Windows.Forms
+  $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+  $dialog.Description = 'Выберите папку, где находится CleanPlaceCRM.exe'
+  $dialog.ShowNewFolderButton = $false
+  if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+    throw 'Папка CRM не выбрана.'
+  }
+
+  $selected = $dialog.SelectedPath
+  if (-not (Test-Path -LiteralPath (Join-Path $selected 'CleanPlaceCRM.exe') -PathType Leaf)) {
+    throw 'В выбранной папке не найден CleanPlaceCRM.exe.'
+  }
+  return $selected
+}
+
+try {
+  $installPath = Resolve-InstallPath -SuggestedPath $InstallDir
 
   Write-Host 'Проверяю последнюю версию CRM…'
   $headers = @{ 'User-Agent' = 'CleanPlaceCRM-Updater' }
   $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$Repository/releases/latest"
-  $asset = @($release.assets | Where-Object { $_.name -eq $AssetName }) | Select-Object -First 1
+  $asset = @($release.assets | Where-Object {
+    $_.name -like "$AssetPrefix*.zip"
+  }) | Select-Object -First 1
   if ($null -eq $asset) {
-    throw "В последнем выпуске $($release.tag_name) нет файла $AssetName."
+    throw "В последнем выпуске $($release.tag_name) нет Windows-архива CRM."
   }
 
   $workPath = Join-Path ([System.IO.Path]::GetTempPath()) ("CleanPlaceCRM-" + [guid]::NewGuid())
-  $zipPath = Join-Path $workPath $AssetName
+  $zipPath = Join-Path $workPath $asset.name
   $unpackPath = Join-Path $workPath 'unpacked'
   New-Item -ItemType Directory -Path $unpackPath -Force | Out-Null
 
