@@ -486,6 +486,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   // collections before the persisted CRM data has finished loading.
   bool _crmDataLoaded = false;
   bool _workspaceRefreshInProgress = false;
+  bool _productCloudRefreshInProgress = false;
   bool _workspaceSaveInProgress = false;
   bool calendarConnected = false;
   String? calendarStatus;
@@ -937,6 +938,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       localChangeQueue.items.removeWhere((item) => item.entity == 'Сессия');
       _audit('Вход в CRM', 'Сессия', session.user.name);
       unawaited(_refreshWorkspaceFromCloud());
+      unawaited(_refreshProductsFromCloud());
       unawaited(_refreshFeedSkus());
       unawaited(_refreshAvitoCatalog());
     } catch (error) {
@@ -1342,6 +1344,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _scheduleAutomaticSync(refreshFromCloud: true);
+      unawaited(_refreshProductsFromCloud());
       // Бейджи «на Авито» обновляем независимо от состояния очереди.
       unawaited(_refreshFeedSkus());
       unawaited(_refreshAvitoCatalog());
@@ -4862,6 +4865,38 @@ $instructions
     // список SKU фида приходит с сервера, данные для него не в workspace.
     unawaited(_refreshFeedSkus());
     unawaited(_refreshAvitoCatalog());
+  }
+
+  /// Загружает каталог отдельным запросом. Это намеренно не ждёт синхронизации
+  /// заметок, сообщений или других разделов: на новом Windows-компьютере
+  /// товары должны появляться сразу после входа.
+  Future<void> _refreshProductsFromCloud() async {
+    final service = _authService;
+    final session = _session;
+    if (_productCloudRefreshInProgress || service == null || session == null) {
+      return;
+    }
+    if (products.isNotEmpty) return;
+    _productCloudRefreshInProgress = true;
+    try {
+      final remoteProducts = await service.readProducts(session.token);
+      if (remoteProducts.isEmpty || !mounted || products.isNotEmpty) return;
+      products
+        ..clear()
+        ..addAll(remoteProducts.map(Product.fromJson));
+      _normalizeProductSkus();
+      _fillAvitoItemIds();
+      await _saveCrmData();
+      if (mounted) setState(() {});
+    } catch (error) {
+      CrmLogger.error(
+        'Не удалось загрузить товары с сервера',
+        error: error,
+        name: 'crm.products',
+      );
+    } finally {
+      _productCloudRefreshInProgress = false;
+    }
   }
 
   /// Обновляет список SKU товаров, которые есть в фиде автозагрузки Авито.
@@ -13147,43 +13182,47 @@ $instructions
     );
   }
 
-  Widget _products() => ProductsPage(
-    items: products,
-    deliveries: deliveries,
-    selectedDeliveryId: selectedDeliveryId,
-    draft: productDraft,
-    canEdit: _canEdit('stock'),
-    onSelectDelivery: (id) => setState(() => selectedDeliveryId = id),
-    onNewDelivery: () => unawaited(_editDelivery()),
-    onEditDelivery: (delivery) => unawaited(_editDelivery(delivery)),
-    onDeleteDelivery: _deleteDelivery,
-    onStatusChanged: (item, status) =>
-        unawaited(_changeProductStatus(item, status)),
-    onExportExcel: _exportProductsExcel,
-    onImportExcel: _importProductsExcel,
-    onImportAvito: _importAvitoExcel,
-    onBulkUpdate: _bulkUpdateProducts,
-    onSalePriceChanged: _updateProductSalePrice,
-    onSale: _applySale,
-    onAvitoSync: _syncWithAvito,
-    onAvitoSettings: _showAvitoSettings,
-    onAvitoCatalog: _showAvitoCatalogDialog,
-    onAvitoStats: _refreshAvitoStats,
-    onAvitoPrices: _refreshAvitoRealPrices,
-    onOrders: _showOrders,
-    activeOrdersCount: _activeOrdersCount,
-    onStartProduct: _startProduct,
-    onSaveProduct: (item) => unawaited(_saveProduct(item)),
-    onDeleteProduct: _deleteProduct,
-    onCloseDraft: _closeProductDraft,
-    onEditProduct: (item) => unawaited(_openProductEditor(item, isNew: false)),
-    mediaBaseUrl: syncEndpoint,
-    onUploadPhotos: _uploadProductPhotos,
-    feedSkus: feedSkus,
-    feedSkusLoaded: feedSkusLoaded,
-    catalog: avitoCatalogData,
-    catalogLoaded: avitoCatalogLoaded,
-  );
+  Widget _products() {
+    unawaited(_refreshProductsFromCloud());
+    return ProductsPage(
+      items: products,
+      deliveries: deliveries,
+      selectedDeliveryId: selectedDeliveryId,
+      draft: productDraft,
+      canEdit: _canEdit('stock'),
+      onSelectDelivery: (id) => setState(() => selectedDeliveryId = id),
+      onNewDelivery: () => unawaited(_editDelivery()),
+      onEditDelivery: (delivery) => unawaited(_editDelivery(delivery)),
+      onDeleteDelivery: _deleteDelivery,
+      onStatusChanged: (item, status) =>
+          unawaited(_changeProductStatus(item, status)),
+      onExportExcel: _exportProductsExcel,
+      onImportExcel: _importProductsExcel,
+      onImportAvito: _importAvitoExcel,
+      onBulkUpdate: _bulkUpdateProducts,
+      onSalePriceChanged: _updateProductSalePrice,
+      onSale: _applySale,
+      onAvitoSync: _syncWithAvito,
+      onAvitoSettings: _showAvitoSettings,
+      onAvitoCatalog: _showAvitoCatalogDialog,
+      onAvitoStats: _refreshAvitoStats,
+      onAvitoPrices: _refreshAvitoRealPrices,
+      onOrders: _showOrders,
+      activeOrdersCount: _activeOrdersCount,
+      onStartProduct: _startProduct,
+      onSaveProduct: (item) => unawaited(_saveProduct(item)),
+      onDeleteProduct: _deleteProduct,
+      onCloseDraft: _closeProductDraft,
+      onEditProduct: (item) =>
+          unawaited(_openProductEditor(item, isNew: false)),
+      mediaBaseUrl: syncEndpoint,
+      onUploadPhotos: _uploadProductPhotos,
+      feedSkus: feedSkus,
+      feedSkusLoaded: feedSkusLoaded,
+      catalog: avitoCatalogData,
+      catalogLoaded: avitoCatalogLoaded,
+    );
+  }
 
   Future<List<String>> _uploadProductPhotos(List<XFile> files) async {
     final service = _authService;

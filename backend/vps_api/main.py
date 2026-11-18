@@ -1504,6 +1504,18 @@ def api(req: dict[str, Any]):
             except ValueError as error:
                 return {'error': str(error)}
             return {'schemaVersion': 3, 'workspace': workspace, 'revisions': read_revisions(c)}
+        if op == 'readProducts':
+            if permission_rank(user, 'stock') < 1:
+                return {'error': 'Недостаточно прав для раздела'}
+            payload = c.execute(
+                text("select payload from crm_snapshots where scope='products'")
+            ).scalar()
+            if not isinstance(payload, dict):
+                return {'items': []}
+            try:
+                return {'items': _objects(payload, 'items', 'products')}
+            except ValueError as error:
+                return {'error': str(error)}
         if op == 'pushChanges':
             problem = validate_changes_request(req, user)
             if problem:

@@ -168,6 +168,18 @@ class CrmAuthService {
     );
   }
 
+  /// Независимая загрузка каталога: экран товаров не должен зависеть от
+  /// состояния других частей общего рабочего пространства.
+  Future<List<Map<String, dynamic>>> readProducts(String sessionToken) async {
+    final response = await _call('readProducts', sessionToken: sessionToken);
+    final items = response['items'];
+    if (items is! List) return const [];
+    return items
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+  }
+
   Future<void> logout(String sessionToken) =>
       _call('logout', sessionToken: sessionToken);
 
