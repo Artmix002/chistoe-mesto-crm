@@ -104,13 +104,14 @@
       }
       // Avito adds logos, badges and recommendations to the page as ordinary
       // images. Only the item gallery contains the listing's own photographs.
-      const galleryImages = [
-        ...document.querySelectorAll(
+      const itemView = document.querySelector('[data-marker="item-view"]');
+      const galleryImages = itemView
+        ? [...itemView.querySelectorAll(
           '[data-marker^="item-view/gallery"] img, ' +
           '[data-marker^="item-view/preview-image"] img, ' +
           '[data-marker^="image-frame"] img',
-        ),
-      ];
+        )]
+        : [];
       const imageUrls = galleryImages
         .flatMap((image) => {
           const srcset = image.getAttribute('srcset') || '';
