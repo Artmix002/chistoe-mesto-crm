@@ -112,6 +112,7 @@ class _AvitoListingImport {
     required this.price,
     required this.description,
     required this.category,
+    required this.categoryPath,
     required this.attributes,
     required this.article,
     required this.photos,
@@ -123,6 +124,7 @@ class _AvitoListingImport {
   final double price;
   final String description;
   final String category;
+  final List<String> categoryPath;
   final Map<String, String> attributes;
   final String article;
   final List<String> photos;
@@ -136,6 +138,10 @@ class _AvitoListingImport {
       price: double.tryParse('${json['price'] ?? ''}') ?? 0,
       description: '${json['description'] ?? ''}',
       category: '${json['category'] ?? ''}',
+      categoryPath: (json['categoryPath'] as List? ?? const [])
+          .map((value) => '$value'.trim())
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false),
       attributes: rawAttributes is Map
           ? rawAttributes.map((key, value) => MapEntry('$key', '$value'))
           : const {},
@@ -13562,6 +13568,11 @@ $instructions
       if (listing.title.trim().isEmpty) {
         throw StateError('В объявлении не найдено название товара');
       }
+      // Category labels displayed on a listing are human-readable. Resolve
+      // them to the Autoload slug before opening the editor, so its required
+      // Avito fields and allowed values are immediately available.
+      if (avitoCatalogData == null) await _refreshAvitoCatalog();
+      final importedCategory = await _resolveImportedAvitoCategory(listing);
       final photoUrls = await _uploadAvitoListingPhotos(listing.photos);
       if (progressContext?.mounted == true)
         Navigator.of(progressContext!).pop();
@@ -13576,9 +13587,16 @@ $instructions
         id: 'product-${DateTime.now().microsecondsSinceEpoch}',
         name: listing.title.trim(),
         sku: sku,
-        category: listing.category.isEmpty ? 'Без категории' : listing.category,
+        category: importedCategory.name,
+        size: _avitoImportedSize(listing.attributes),
         description: listing.description,
-        attributes: {'avito_slug': '', ...listing.attributes},
+        attributes: {
+          'avito_slug': importedCategory.slug,
+          ..._mapImportedAvitoAttributes(
+            listing.attributes,
+            importedCategory.slug,
+          ),
+        },
         marketplace: 'avito',
         marketplaceUrl: listing.itemUrl,
         avitoItemId: listing.itemId,
@@ -13618,6 +13636,85 @@ $instructions
         _avitoImportItemId = null;
       }
     }
+  }
+
+  String _normalizeAvitoMatchText(String value) => value
+      .toLowerCase()
+      .replaceAll('ё', 'е')
+      .replaceAll(RegExp(r'[^a-zа-я0-9]+'), '');
+
+  /// Finds the Autoload category represented by the breadcrumb on an Avito
+  /// listing. We intentionally only accept an exact normalized match: a wrong
+  /// category is worse than leaving a product for the user to choose.
+  Future<({String name, String slug})> _resolveImportedAvitoCategory(
+    _AvitoListingImport listing,
+  ) async {
+    final catalog = avitoCatalogData;
+    final fallback = listing.category.trim().isEmpty
+        ? 'Без категории'
+        : listing.category.trim();
+    if (catalog == null) return (name: fallback, slug: '');
+
+    final candidates = <String>{
+      if (listing.category.trim().isNotEmpty) listing.category.trim(),
+      ...listing.categoryPath.reversed,
+    };
+    for (final candidate in candidates) {
+      final needle = _normalizeAvitoMatchText(candidate);
+      if (needle.isEmpty) continue;
+      for (final category in catalog.categories) {
+        if (_normalizeAvitoMatchText(category.name) == needle) {
+          await _loadAvitoCategoryFields(category.slug);
+          return (name: category.name, slug: category.slug);
+        }
+      }
+    }
+    return (name: fallback, slug: '');
+  }
+
+  /// Keeps all parsed characteristics, and additionally maps common label
+  /// variations from the public listing to the labels used by Autoload.
+  Map<String, String> _mapImportedAvitoAttributes(
+    Map<String, String> source,
+    String slug,
+  ) {
+    final result = <String, String>{
+      for (final entry in source.entries)
+        if (entry.value.trim().isNotEmpty) entry.key: entry.value.trim(),
+    };
+    final fields = avitoCatalogData?.fields[slug] ?? const <AvitoField>[];
+    final byNormalizedName = <String, String>{
+      for (final entry in result.entries)
+        _normalizeAvitoMatchText(entry.key): entry.value,
+    };
+    const aliases = <String, List<String>>{
+      'марка': ['бренд', 'производитель'],
+      'бренд': ['марка', 'производитель'],
+      'размер': ['размеродежды', 'размеробуви'],
+      'состояние': ['состояниетовара'],
+      'пол': ['длякого', 'гендер'],
+    };
+    for (final field in fields) {
+      final normalized = _normalizeAvitoMatchText(field.label);
+      var value = byNormalizedName[normalized];
+      for (final alias in aliases[normalized] ?? const <String>[]) {
+        value ??= byNormalizedName[alias];
+      }
+      if (value != null && value.trim().isNotEmpty) {
+        result[field.label] = value.trim();
+      }
+    }
+    return result;
+  }
+
+  String _avitoImportedSize(Map<String, String> attributes) {
+    for (final entry in attributes.entries) {
+      if (_normalizeAvitoMatchText(entry.key).startsWith('размер') &&
+          entry.value.trim().isNotEmpty) {
+        return entry.value.trim();
+      }
+    }
+    return '';
   }
 
   Future<List<String>> _uploadAvitoListingPhotos(List<String> photoUrls) async {

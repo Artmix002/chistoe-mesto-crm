@@ -92,10 +92,13 @@
         .replace(/^описание\s*/i, '')
         .replace(/Показать полностью$/i, '')
         .trim();
-      const category = normalize(
-        document.querySelector('[data-marker*="breadcrumbs" i]')?.innerText ||
-        [...document.querySelectorAll('nav a')].map((node) => node.innerText).join(' '),
-      ).split(' ').filter(Boolean).at(-1) || '';
+      const breadcrumbItems = [...document.querySelectorAll(
+        '[data-marker*="breadcrumbs" i] a, [data-marker*="breadcrumbs" i] span',
+      )]
+        .map((node) => normalize(node.innerText))
+        .filter((value) => value && !/^главная$/i.test(value));
+      const categoryPath = [...new Set(breadcrumbItems)];
+      const category = categoryPath.at(-1) || '';
       const attributes = {};
       for (const node of document.querySelectorAll('li, [data-marker*="item-params" i]')) {
         const lines = (node.innerText || '').split('\n').map((line) => normalize(line)).filter(Boolean);
@@ -150,6 +153,7 @@
             price: price.replace(/\s+/g, ''),
             description: descriptionText,
             category,
+            categoryPath,
             attributes,
             article,
             photos: uniquePhotos,
