@@ -668,7 +668,15 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     // сохранённый адрес есть, он имеет приоритет над адресом сборки; это
     // позволяет перейти с Apps Script на VPS без новой установки приложения.
     final configured = AppConfig.serverUrl.trim();
-    return Uri.tryParse(saved.isNotEmpty ? saved : configured);
+    final savedUri = Uri.tryParse(saved);
+    // Ранние Windows-сборки получили в настройках адрес Apps Script. Он не
+    // поддерживает защищённый каталог товаров VPS и отвечал Unsupported
+    // payload. Для него используем адрес сервера из актуальной сборки.
+    final savedLegacyAppsScript =
+        savedUri?.host.endsWith('script.google.com') ?? false;
+    return Uri.tryParse(
+      saved.isNotEmpty && !savedLegacyAppsScript ? saved : configured,
+    );
   }
 
   Future<void> _initializeAuth() async {
