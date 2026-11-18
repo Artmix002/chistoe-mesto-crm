@@ -104,6 +104,51 @@ void main() {
   runApp(const CleanPlaceApp());
 }
 
+class _AvitoListingImport {
+  const _AvitoListingImport({
+    required this.itemId,
+    required this.itemUrl,
+    required this.title,
+    required this.price,
+    required this.description,
+    required this.category,
+    required this.attributes,
+    required this.article,
+    required this.photos,
+  });
+
+  final String itemId;
+  final String itemUrl;
+  final String title;
+  final double price;
+  final String description;
+  final String category;
+  final Map<String, String> attributes;
+  final String article;
+  final List<String> photos;
+
+  factory _AvitoListingImport.fromJson(Map<String, dynamic> json) {
+    final rawAttributes = json['attributes'];
+    return _AvitoListingImport(
+      itemId: '${json['itemId'] ?? ''}',
+      itemUrl: '${json['itemUrl'] ?? ''}',
+      title: '${json['title'] ?? ''}',
+      price: double.tryParse('${json['price'] ?? ''}') ?? 0,
+      description: '${json['description'] ?? ''}',
+      category: '${json['category'] ?? ''}',
+      attributes: rawAttributes is Map
+          ? rawAttributes.map((key, value) => MapEntry('$key', '$value'))
+          : const {},
+      article: '${json['article'] ?? ''}',
+      photos: (json['photos'] as List? ?? const [])
+          .map((value) => value.toString())
+          .where((value) => value.startsWith('http'))
+          .take(10)
+          .toList(),
+    );
+  }
+}
+
 class CleanPlaceApp extends StatefulWidget {
   const CleanPlaceApp({super.key});
 
@@ -368,6 +413,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   final SecretStore secretStore = const SecretStore();
   final RequestCancellation _lifecycleCancellation = RequestCancellation();
   HttpServer? _ordersBridge;
+  String? _avitoImportRequestId;
+  String? _avitoImportItemId;
+  Completer<_AvitoListingImport>? _avitoImportCompleter;
   late final ApiClient _apiClient;
   CrmAuthService? _authService;
   bool _serverConfigurationInitialized = false;
@@ -1288,6 +1336,46 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           request.response.write(
             jsonEncode({'closedOrderNumbers': closedNumbers}),
           );
+        } else if (request.method == 'GET' &&
+            request.uri.path == '/avito/import/request') {
+          final url = request.uri.queryParameters['url'] ?? '';
+          final itemId = _avitoIdFromUrl(url);
+          final pending =
+              _avitoImportCompleter != null &&
+              !_avitoImportCompleter!.isCompleted &&
+              itemId.isNotEmpty &&
+              itemId == _avitoImportItemId;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(
+            jsonEncode({
+              'pending': pending,
+              if (pending) 'requestId': _avitoImportRequestId,
+            }),
+          );
+        } else if (request.method == 'POST' &&
+            request.uri.path == '/avito/import/listing') {
+          try {
+            final body = await utf8.decoder.bind(request).join();
+            final data = jsonDecode(body);
+            if (data is! Map ||
+                data['requestId'] != _avitoImportRequestId ||
+                data['itemId'] != _avitoImportItemId ||
+                _avitoImportCompleter == null ||
+                _avitoImportCompleter!.isCompleted) {
+              request.response.statusCode = HttpStatus.conflict;
+            } else {
+              _avitoImportCompleter!.complete(
+                _AvitoListingImport.fromJson(Map<String, dynamic>.from(data)),
+              );
+              request.response.headers.contentType = ContentType.json;
+              request.response.write(jsonEncode({'ok': true}));
+            }
+          } catch (error) {
+            request.response.statusCode = HttpStatus.badRequest;
+            request.response.write(
+              jsonEncode({'ok': false, 'error': '$error'}),
+            );
+          }
         } else if (request.method == 'POST' &&
             request.uri.path == '/avito/orders') {
           try {
@@ -13279,6 +13367,7 @@ $instructions
       onOrders: _showOrders,
       activeOrdersCount: _activeOrdersCount,
       onStartProduct: _startProduct,
+      onImportFromAvito: _importProductFromAvito,
       onSaveProduct: (item) => unawaited(_saveProduct(item)),
       onDeleteProduct: _deleteProduct,
       onCloseDraft: _closeProductDraft,
@@ -13319,6 +13408,198 @@ $instructions
       }
     }
     return urls;
+  }
+
+  Future<void> _importProductFromAvito() async {
+    if (!_canEdit('stock')) return;
+    final link = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Добавить товар с Авито'),
+        content: SizedBox(
+          width: 460,
+          child: TextField(
+            controller: link,
+            autofocus: true,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              labelText: 'Ссылка на ваше объявление Авито',
+              hintText: 'https://www.avito.ru/..._1234567890',
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, link.text.trim()),
+            icon: const Icon(Icons.cloud_download_outlined),
+            label: const Text('Заполнить'),
+          ),
+        ],
+      ),
+    );
+    link.dispose();
+    if (url == null || url.isEmpty) return;
+
+    final itemId = _avitoIdFromUrl(url);
+    if (itemId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Вставьте ссылку на объявление Авито')),
+        );
+      }
+      return;
+    }
+    if (products.any((product) => product.avitoItemId == itemId)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Это объявление уже связано с товаром')),
+        );
+      }
+      return;
+    }
+
+    final completer = Completer<_AvitoListingImport>();
+    _avitoImportRequestId = 'import-${DateTime.now().microsecondsSinceEpoch}';
+    _avitoImportItemId = itemId;
+    _avitoImportCompleter = completer;
+    final opened = Platform.isMacOS
+        ? (await Process.run('open', ['-a', 'Google Chrome', url])).exitCode ==
+              0
+        : Platform.isWindows
+        ? (await Process.run('cmd', [
+                '/c',
+                'start',
+                '',
+                'chrome',
+                url,
+              ])).exitCode ==
+              0
+        : await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!opened) {
+      _avitoImportCompleter = null;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть Google Chrome')),
+        );
+      }
+      return;
+    }
+
+    BuildContext? progressContext;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          progressContext = dialogContext;
+          return const AlertDialog(
+            content: SizedBox(
+              width: 330,
+              child: Row(
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(width: 16),
+                  Flexible(child: Text('Получаю данные объявления из Chrome…')),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    try {
+      final listing = await completer.future.timeout(
+        const Duration(seconds: 75),
+      );
+      if (listing.title.trim().isEmpty) {
+        throw StateError('В объявлении не найдено название товара');
+      }
+      final photoUrls = await _uploadAvitoListingPhotos(listing.photos);
+      if (progressContext?.mounted == true)
+        Navigator.of(progressContext!).pop();
+
+      final sourceSku = listing.article.trim();
+      final sku =
+          sourceSku.isNotEmpty &&
+              !products.any((product) => skuEquals(product.sku, sourceSku))
+          ? sourceSku
+          : nextProductSku(products.map((product) => product.sku));
+      final product = Product(
+        id: 'product-${DateTime.now().microsecondsSinceEpoch}',
+        name: listing.title.trim(),
+        sku: sku,
+        category: listing.category.isEmpty ? 'Без категории' : listing.category,
+        description: listing.description,
+        attributes: {'avito_slug': '', ...listing.attributes},
+        marketplace: 'avito',
+        marketplaceUrl: listing.itemUrl,
+        avitoItemId: listing.itemId,
+        marketplacePrice: listing.price,
+        price: listing.price,
+        photo: photoUrls.isEmpty ? '' : photoUrls.first,
+        photos: photoUrls,
+        deliveryId: selectedDeliveryId,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      if (!mounted) return;
+      await _openProductEditor(product, isNew: true);
+    } on TimeoutException {
+      if (progressContext?.mounted == true)
+        Navigator.of(progressContext!).pop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Нет ответа от расширения Chrome. Откройте расширение и обновите страницу объявления.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (progressContext?.mounted == true)
+        Navigator.of(progressContext!).pop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось получить объявление: $error')),
+        );
+      }
+    } finally {
+      if (identical(_avitoImportCompleter, completer)) {
+        _avitoImportCompleter = null;
+        _avitoImportRequestId = null;
+        _avitoImportItemId = null;
+      }
+    }
+  }
+
+  Future<List<String>> _uploadAvitoListingPhotos(List<String> photoUrls) async {
+    final service = _authService;
+    final session = _session;
+    if (service == null || session == null) return const [];
+    final uploaded = <String>[];
+    for (final photoUrl in photoUrls.take(10)) {
+      try {
+        final response = await http
+            .get(
+              Uri.parse(photoUrl),
+              headers: const {'user-agent': 'Mozilla/5.0'},
+            )
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+          uploaded.add(
+            await service.uploadPhoto(session.token, response.bodyBytes),
+          );
+        }
+      } catch (_) {
+        // Other photos still make the imported product usable.
+      }
+    }
+    return uploaded;
   }
 
   void _startProduct() {

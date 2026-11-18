@@ -59,6 +59,75 @@
 
   const listingId = (location.pathname.match(/_(\d{7,})(?:$|[/?#])/) || [])[1];
   if (listingId) {
+    const maybeImportListing = async () => {
+      let request;
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:47621/avito/import/request?url=${encodeURIComponent(location.href)}`,
+        );
+        if (!response.ok) return;
+        request = await response.json();
+      } catch (_) {
+        return;
+      }
+      if (!request?.pending) return;
+
+      const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+      const body = document.body?.innerText || '';
+      const title = normalize(document.querySelector('h1')?.innerText);
+      const price = (body.match(/(?<!\d)([\d\s\u00a0]{2,})\s*₽/) || [])[1] || '';
+      const descriptionHeading = [...document.querySelectorAll('h1,h2,h3')]
+        .find((node) => normalize(node.innerText).toLowerCase() === 'описание');
+      const description = normalize(
+        descriptionHeading?.parentElement?.parentElement?.innerText ||
+        descriptionHeading?.parentElement?.innerText,
+      );
+      const descriptionText = description
+        .replace(/^описание\s*/i, '')
+        .replace(/Показать полностью$/i, '')
+        .trim();
+      const category = normalize(
+        document.querySelector('[data-marker*="breadcrumbs" i]')?.innerText ||
+        [...document.querySelectorAll('nav a')].map((node) => node.innerText).join(' '),
+      ).split(' ').filter(Boolean).at(-1) || '';
+      const attributes = {};
+      for (const node of document.querySelectorAll('li, [data-marker*="item-params" i]')) {
+        const lines = (node.innerText || '').split('\n').map((line) => normalize(line)).filter(Boolean);
+        if (lines.length < 2 || lines[0].length > 50 || lines[1].length > 120) continue;
+        if (!attributes[lines[0]]) attributes[lines[0]] = lines.slice(1).join(', ');
+      }
+      const imageUrls = [...document.images]
+        .flatMap((image) => {
+          const srcset = image.getAttribute('srcset') || '';
+          const best = srcset.split(',').map((item) => item.trim().split(/\s+/)[0]).filter(Boolean).at(-1);
+          return [best, image.currentSrc, image.src];
+        })
+        .filter((url) => /^https?:\/\//.test(url) && /avito|cdn|image/i.test(url));
+      const photos = [...new Set(imageUrls)].slice(0, 10);
+      const article = (
+        descriptionText.match(/(?:артикул|арт\.?|sku)\s*[:№#-]?\s*([a-zа-я0-9_-]{3,})/i) ||
+        []
+      )[1] || '';
+      try {
+        await fetch('http://127.0.0.1:47621/avito/import/listing', {
+          method: 'POST',
+          headers: {'content-type': 'application/json'},
+          body: JSON.stringify({
+            requestId: request.requestId,
+            itemId: listingId,
+            itemUrl: location.href,
+            title,
+            price: price.replace(/\s+/g, ''),
+            description: descriptionText,
+            category,
+            attributes,
+            article,
+            photos,
+          }),
+        });
+      } catch (_) {}
+    };
+    setTimeout(maybeImportListing, 1500);
     let tries = 0;
     const reportListing = () => {
       const descriptionHeading = [...document.querySelectorAll('h1,h2,h3')]

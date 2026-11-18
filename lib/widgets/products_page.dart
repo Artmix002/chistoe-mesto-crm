@@ -40,6 +40,7 @@ class ProductsPage extends StatelessWidget {
     this.onSale,
     this.onSalePriceChanged,
     required this.onStartProduct,
+    this.onImportFromAvito,
     required this.onSaveProduct,
     required this.onDeleteProduct,
     required this.onCloseDraft,
@@ -84,6 +85,7 @@ class ProductsPage extends StatelessWidget {
   final Future<void> Function(Product product, double price)?
   onSalePriceChanged;
   final VoidCallback onStartProduct;
+  final Future<void> Function()? onImportFromAvito;
   final ValueChanged<Product> onSaveProduct;
   final Future<void> Function(Product) onDeleteProduct;
   final VoidCallback onCloseDraft;
@@ -251,18 +253,29 @@ class ProductsPage extends StatelessWidget {
                 Icons.local_shipping_outlined,
               ),
               if (canEdit)
-                FilledButton.icon(
-                  onPressed: onStartProduct,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFF1E3A8A),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 14,
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: onStartProduct,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF1E3A8A),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 14,
+                        ),
+                      ),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Товар'),
                     ),
-                  ),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Товар'),
+                    if (onImportFromAvito != null)
+                      FilledButton.tonalIcon(
+                        onPressed: () => unawaited(onImportFromAvito!()),
+                        icon: const Icon(Icons.cloud_download_outlined),
+                        label: const Text('С Авито'),
+                      ),
+                  ],
                 ),
             ],
           ),
